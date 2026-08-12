@@ -358,7 +358,7 @@ itself, pointed at the real deployment.
 | Wedge | Correction loop for technical diagrams, inside a general studio | Proven personal workflow; nobody sells it |
 | Edit mechanism | Crop → edit → align → composite | Drift is architectural in AR models, not a missing parameter |
 | Interaction | Language in → proposed region shown → confirm → run | Field is moving to "design software, not slot machine" |
-| v1 image scope | Any diagram image in, not only self-generated | Competitors' output becomes input |
+| Correction-feature scope | Accepts *any* image, not only ones Emulsion generated | Competitors' output becomes input. The studio (generate + edit + history) is the product; correction is one feature within it. |
 | Surface | Hosted web app, BYOK from day one | User decision |
 | Providers at launch | OpenAI + Azure OpenAI only | One adapter, two deploy targets, already in production |
 | Money at launch | BYOK free + hosted paid tier | User decision |
