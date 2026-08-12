@@ -1,0 +1,44 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# node
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# local data
+scratch/
+tmp/
+*.local
+
+# generated images — never commit, they are 1.4-13.4MB each
+generated/
+fixtures/large/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# claude local overrides
+.claude/settings.local.json
