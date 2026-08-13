@@ -9,6 +9,7 @@ dependencies = [
     "emulsion-api",
     "emulsion-db",
     "emulsion-engine",
+    "emulsion-imaging",
     "emulsion-platform",
     "emulsion-providers",
     "emulsion-worker",
@@ -24,6 +25,7 @@ members = ["packages/*", "services/*"]
 emulsion-api = { workspace = true }
 emulsion-db = { workspace = true }
 emulsion-engine = { workspace = true }
+emulsion-imaging = { workspace = true }
 emulsion-platform = { workspace = true }
 emulsion-providers = { workspace = true }
 emulsion-worker = { workspace = true }

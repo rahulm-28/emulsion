@@ -1,0 +1,78 @@
+"""Imaging primitives. numpy and Pillow only — imports nothing web (invariant 2)."""
+
+from .align import align, estimate_shift, residual, shift_image
+from .colour import apply_gain_offset, fit_gain_offset, normalise
+from .composite import (
+    CompositeInvariantError,
+    assert_outside_unchanged,
+    composite,
+    feather_mask,
+    outside_difference,
+)
+from .derivatives import (
+    GALLERY_EDGE,
+    VIEWER_EDGE,
+    Derivative,
+    RegionPlan,
+    RegionResult,
+    apply_region_edit,
+    build_pyramid,
+    choose_best,
+    plan_region_edit,
+    to_array,
+    to_png,
+)
+from .gutters import (
+    Rect,
+    column_flatness,
+    flat_runs,
+    gutter_fraction,
+    row_flatness,
+    snap_to_gutters,
+)
+from .score import (
+    CandidateScore,
+    change_outside,
+    context_drift,
+    rank,
+    score_candidate,
+    seam_discontinuity,
+)
+
+__all__ = [
+    "GALLERY_EDGE",
+    "VIEWER_EDGE",
+    "CandidateScore",
+    "CompositeInvariantError",
+    "Derivative",
+    "Rect",
+    "RegionPlan",
+    "RegionResult",
+    "align",
+    "apply_gain_offset",
+    "apply_region_edit",
+    "assert_outside_unchanged",
+    "build_pyramid",
+    "change_outside",
+    "choose_best",
+    "column_flatness",
+    "composite",
+    "context_drift",
+    "estimate_shift",
+    "feather_mask",
+    "fit_gain_offset",
+    "flat_runs",
+    "gutter_fraction",
+    "normalise",
+    "outside_difference",
+    "plan_region_edit",
+    "rank",
+    "residual",
+    "row_flatness",
+    "score_candidate",
+    "seam_discontinuity",
+    "shift_image",
+    "snap_to_gutters",
+    "to_array",
+    "to_png",
+]
