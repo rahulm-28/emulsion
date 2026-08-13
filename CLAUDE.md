@@ -21,22 +21,33 @@ wins — and fix this file.
 
 ## Current state
 
-**No application code exists yet.** The repo contains specs only.
+A **runnable vertical slice** exists: `make install && make dev`, then localhost:3000.
+It runs with no Docker and no cloud account, on an `echo` adapter that generates images
+locally for free. `EMULSION_ADAPTER=foundry` switches to the real model.
+
+This slice deliberately reaches ahead of the module order to make the architecture
+testable end to end. Everything it contains is either M0-decided or a `ponytail:`-marked
+placeholder — **no module is finished**, and each still needs its own spec.
 
 | Module | Status |
 |---|---|
 | **M0** Foundations — stack, execution model, deploy, config | ✅ spec approved |
-| **M1** Provider layer — adapters, auth modes, retry, cost accounting | ⬜ next |
-| **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | ⬜ |
-| **M3** App shell — auth, workspaces, sessions, storage, library | ⬜ |
-| **M4** Generation flow — chat UI, job progress, history, reruns | ⬜ |
+| **M1** Provider layer — adapters, auth modes, retry, cost accounting | 🟨 manifests, sizing, cost, throttle, echo + foundry adapters built; **no spec, no managed identity, no BYOK** |
+| **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | 🟨 param resolver done; **`compile_prompt` is a pass-through stub**, no ranking |
+| **M3** App shell — auth, workspaces, sessions, storage, library | 🟨 storage + library + lineage work; **no auth, no workspaces, single implicit user** |
+| **M4** Generation flow — chat UI, job progress, history, reruns | 🟨 prompt → SSE progress → library works; no chat, no reruns |
 | **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | ⬜ |
 | **M6** Post-processing — upscale, transparency, export, vector text layer | ⬜ |
 | **M7** Intelligence — learned constraints, house styles, deck consistency | ⬜ |
 | **M8** Plans & billing — BYOK vs hosted routing, quotas, metering, Stripe | ⬜ |
 
 Modules are completed **one at a time, in order**. Each gets: brainstorm → spec → plan →
-implement → verify. Do not start a module before the previous one is finished.
+implement → verify.
+
+The vertical slice above is scaffolding that cuts across several of them on purpose — it
+exists so the invariants are enforced by running code rather than by a document. It does
+not make any module done. When you pick up a module, spec it properly and expect to
+replace the placeholder rather than extend it.
 
 ### Predecessor project
 
@@ -189,14 +200,35 @@ would not be.
 
 ### Azure Foundry quirks (from `../gpt-image-2/generate.py`)
 
-- `/images/generations` works on `api-version=2024-02-01`
-- `/images/edits` **404s** on `2024-02-01`; needs `2025-04-01-preview`
-- Edits require `multipart/form-data`, PNG or JPG input (not HEIC)
-- Multiple reference images go in the `image[]` field
-- Size rules: min 655,360 px · max 8,294,400 px · long edge ≤ 3840 · aspect ≤ 3:1
-- Retry: 429 → backoff `[5, 15, 45]`; 5xx → once; timeout 300s
+Measured against the live deployment on 2026-08-12. The manifest at
+`packages/providers/.../manifests/gpt-image-2.yaml` carries per-field provenance; trust it
+over this summary.
+
+- **One api-version covers both endpoints:** `2025-04-01-preview` works on
+  `/images/generations` *and* `/images/edits`. `2024-02-01` 404s on edits. There is no need
+  for the URL-rewrite trick `generate.py` uses.
+- **`input_fidelity` is unsupported** — a hard model-level 400, not an api-version artefact
+- **`mask` is accepted but does not hold**: 93.5% of pixels outside the mask still moved
+  (mean 6.46/255). Full-image regeneration with a soft bias. This is *why* M5 crops and
+  composites
+- **`n=2` returns 2 images in one request** — one rate-limit slot. Candidate generation is
+  far cheaper than K separate calls
+- **Rate limit is 2 requests per 11s (~10.9 rpm)**, from `x-ratelimit-*` headers — *not* the
+  "2 RPM" claimed in `generate.py:223`
+- **Both `api-key:` and `Authorization: Bearer` authenticate**, so hosted and BYOK can share
+  one code path
+- **Cost scales viciously with size:** 107 / 1413 / 13342 output tokens at 1024x640 low,
+  2048x1152 medium, 3840x2160 high. ~**$0.53 per 4K image** — but the USD rate is *inferred*
+  from OpenAI's published pricing, not confirmed against an Azure invoice
+- Edits require `multipart/form-data`, PNG or JPG input (not HEIC); references go in `image[]`
+- Size rules: min 655,360 px · max 8,294,400 px · long edge ≤ 3840 · aspect ≤ 3:1 ·
+  **each edge a multiple of 16** · 50 MB per input file
+- Retry: 429 → backoff `[5, 15, 45]` but prefer the `Retry-After` header; 5xx → once; timeout 300s
 - Transparency is **not supported** — M6 post-processes it instead
-- `input_fidelity` availability is **unverified** on this deployment — M1 must establish it
+
+**Open, and it decides M2's economics:** is a `seed` parameter accepted, and is it stable
+across sizes? If yes, rank K cheap candidates and re-render the winner at 4K (~$0.55/action).
+If no, ranking must happen at full resolution (~$2.13/action at K=4).
 
 ### Auth: keyless for platform, BYOK for users
 
