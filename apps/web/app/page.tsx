@@ -1,0 +1,363 @@
+"use client";
+
+import { PanelLeft, PanelRight } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Composer } from "@/components/Composer";
+import { Inspector } from "@/components/Inspector";
+import { LogoMark } from "@/components/Logo";
+import { Sidebar } from "@/components/Sidebar";
+import { Thread } from "@/components/Thread";
+import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
+import {
+  createJob,
+  deleteSession,
+  getHealth,
+  getJob,
+  listModels,
+  listSessionJobs,
+  listSessions,
+  renameSession,
+  streamJob,
+  type HealthOut,
+  type ImageOut,
+  type JobOut,
+  type ModelOut,
+  type SessionOut,
+} from "@/lib/api";
+
+const SUGGESTIONS = [
+  {
+    title: "Architecture diagram",
+    prompt:
+      "A four-zone system architecture diagram, labelled, flat vector, generous whitespace gutters between zones",
+  },
+  {
+    title: "Technical illustration",
+    prompt:
+      "An exploded isometric view of a mechanical keyboard switch, technical illustration, thin line weights",
+  },
+  {
+    title: "Editorial chart",
+    prompt:
+      "A muted editorial chart showing quarterly revenue, clean sans-serif labels, no gridlines",
+  },
+];
+
+export default function Studio() {
+  const [models, setModels] = useState<ModelOut[]>([]);
+  const [health, setHealth] = useState<HealthOut | null>(null);
+  const [sessions, setSessions] = useState<SessionOut[]>([]);
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<JobOut[]>([]);
+
+  const [prompt, setPrompt] = useState("");
+  const [modelId, setModelId] = useState("gpt-image-2");
+  const [size, setSize] = useState("1k");
+  const [count, setCount] = useState(1);
+  const [parent, setParent] = useState<ImageOut | null>(null);
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ImageOut | null>(null);
+
+  const [navOpen, setNavOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+
+  const unsubscribe = useRef<null | (() => void)>(null);
+  const bottom = useRef<HTMLDivElement>(null);
+
+  const model = models.find((m) => m.id === modelId) ?? null;
+  const activeSession = sessions.find((s) => s.id === sessionId) ?? null;
+  const selectedJob = jobs.find((j) => j.images.some((i) => i.id === selected?.id)) ?? null;
+
+  const refreshSessions = useCallback(async () => {
+    setSessions(await listSessions());
+  }, []);
+
+  useEffect(() => {
+    listModels()
+      .then((found) => {
+        setModels(found);
+        if (found[0]) setModelId(found[0].id);
+      })
+      .catch((e) => setError(String(e)));
+    getHealth().then(setHealth).catch(() => undefined);
+    refreshSessions().catch((e) => setError(String(e)));
+    return () => unsubscribe.current?.();
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setJobs([]);
+      return;
+    }
+    let live = true;
+    listSessionJobs(sessionId)
+      .then((found) => {
+        if (!live) return;
+        setJobs(found);
+        setSelected(found.at(-1)?.images.at(-1) ?? null);
+      })
+      .catch(() => live && setJobs([]));
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [jobs.length, busy]);
+
+  function upsertJob(next: JobOut) {
+    setJobs((prev) => {
+      const index = prev.findIndex((j) => j.id === next.id);
+      if (index === -1) return [...prev, next];
+      const copy = [...prev];
+      copy[index] = next;
+      return copy;
+    });
+  }
+
+  async function submit() {
+    if (!prompt.trim() || busy) return;
+    unsubscribe.current?.();
+    setBusy(true);
+    setError(null);
+
+    const text = prompt.trim();
+    setPrompt("");
+
+    try {
+      const created = await createJob({
+        prompt: text,
+        model_id: modelId,
+        size,
+        n: count,
+        parent_image_id: parent?.id ?? null,
+        session_id: sessionId,
+      });
+
+      setSessionId(created.session_id);
+      upsertJob(created);
+      setParent(null);
+      refreshSessions().catch(() => undefined);
+
+      unsubscribe.current = streamJob(created.id, {
+        onMessage: (kind, message) =>
+          upsertJob({
+            ...created,
+            status: kind === "error" ? "failed" : "running",
+            events: [
+              ...(created.events ?? []),
+              { seq: Date.now(), kind, message, created_at: new Date().toISOString() },
+            ],
+          }),
+        onDone: (finished) => {
+          upsertJob(finished);
+          setBusy(false);
+          if (finished.status === "failed") setError(finished.error ?? "job failed");
+          const image = finished.images.at(0);
+          if (image) setSelected(image);
+          refreshSessions().catch(() => undefined);
+          getHealth().then(setHealth).catch(() => undefined);
+        },
+        onError: (message) => {
+          setError(message);
+          setBusy(false);
+        },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPrompt(text);
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Stop watching, not stop generating. The worker has no HTTP request above it and
+   * will finish regardless — pretending otherwise would be a lie, so the job is
+   * re-read once rather than abandoned.
+   */
+  function stopWatching() {
+    unsubscribe.current?.();
+    unsubscribe.current = null;
+    setBusy(false);
+    const running = jobs.at(-1);
+    if (running) {
+      getJob(running.id).then(upsertJob).catch(() => undefined);
+    }
+  }
+
+  function startNew() {
+    unsubscribe.current?.();
+    setSessionId(null);
+    setJobs([]);
+    setSelected(null);
+    setParent(null);
+    setError(null);
+    setBusy(false);
+    setNavOpen(false);
+  }
+
+  async function handleDelete(id: string) {
+    await deleteSession(id);
+    if (id === sessionId) startNew();
+    refreshSessions().catch(() => undefined);
+  }
+
+  async function handleRename(id: string, title: string) {
+    await renameSession(id, title);
+    refreshSessions().catch(() => undefined);
+  }
+
+  return (
+    <div className="flex h-[100dvh] overflow-hidden">
+      <Sidebar
+        sessions={sessions}
+        activeId={sessionId}
+        health={health}
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        onSelect={(id) => {
+          setSessionId(id);
+          setNavOpen(false);
+        }}
+        onNew={startNew}
+        onRename={handleRename}
+        onDelete={handleDelete}
+      />
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open navigation"
+            className="lg:hidden"
+          >
+            <PanelLeft />
+          </Button>
+
+          <div className="min-w-0 flex-1 px-1">
+            <h1 className="truncate text-[13px] font-medium text-foreground">
+              {activeSession?.title ?? "New generation"}
+            </h1>
+            {activeSession && (
+              <p className="truncate font-mono text-[10px] text-subtle-foreground">
+                {activeSession.job_count} generation
+                {activeSession.job_count === 1 ? "" : "s"} · {activeSession.model_id}
+              </p>
+            )}
+          </div>
+
+          <Tooltip label={inspectorOpen ? "Hide inspector" : "Show inspector"}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setInspectorOpen((v) => !v)}
+              aria-label={inspectorOpen ? "Hide inspector" : "Show inspector"}
+              aria-pressed={inspectorOpen}
+              className={inspectorOpen ? "text-foreground" : undefined}
+            >
+              <PanelRight />
+            </Button>
+          </Tooltip>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {jobs.length === 0 ? (
+            <EmptyState onPick={setPrompt} />
+          ) : (
+            <Thread
+              jobs={jobs}
+              selectedImageId={selected?.id ?? null}
+              onSelectImage={(image) => {
+                setSelected(image);
+                setInspectorOpen(true);
+              }}
+              onEdit={(image) => {
+                setParent(image);
+                setSelected(image);
+              }}
+            />
+          )}
+          <div ref={bottom} />
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="mx-auto w-full max-w-3xl px-4 pb-1 text-xs text-danger"
+          >
+            {error}
+          </div>
+        )}
+
+        <Composer
+          prompt={prompt}
+          onPrompt={setPrompt}
+          models={models}
+          modelId={modelId}
+          onModel={setModelId}
+          size={size}
+          onSize={setSize}
+          count={count}
+          onCount={setCount}
+          parent={parent}
+          onClearParent={() => setParent(null)}
+          busy={busy}
+          onSubmit={submit}
+          onStop={stopWatching}
+        />
+      </main>
+
+      <div className="hidden lg:block">
+        <Inspector
+          image={selected}
+          job={selectedJob}
+          model={model}
+          open={inspectorOpen}
+          onClose={() => setInspectorOpen(false)}
+          onSelect={setSelected}
+          onEdit={(image) => setParent(image)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
+  return (
+    <div className="mx-auto flex h-full w-full max-w-2xl flex-col items-center justify-center px-6 text-center">
+      <LogoMark className="size-9 text-accent-fill" />
+      <h2 className="mt-6 font-serif text-[34px] leading-tight tracking-tight text-foreground">
+        Same model, better layer.
+      </h2>
+      <p className="mt-3 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
+        Describe what you want. Every generation runs as an async job, and the work is
+        shown — not hidden behind a spinner.
+      </p>
+
+      <div className="mt-9 grid w-full gap-2 sm:grid-cols-3">
+        {SUGGESTIONS.map((suggestion) => (
+          <button
+            key={suggestion.title}
+            type="button"
+            onClick={() => onPick(suggestion.prompt)}
+            className="group cursor-pointer rounded-xl border border-border bg-card p-3 text-left transition-colors duration-200 hover:border-border-strong hover:bg-background-subtle"
+          >
+            <span className="block text-[12px] font-medium text-foreground">
+              {suggestion.title}
+            </span>
+            <span className="mt-1 block line-clamp-3 text-[11px] leading-relaxed text-subtle-foreground">
+              {suggestion.prompt}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}

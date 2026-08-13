@@ -1,0 +1,220 @@
+@import "tailwindcss";
+
+/* Class-based theming: next-themes puts .dark on <html>. */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Semantic tokens, not colour names. Components say bg-card / text-muted-foreground,
+ * so a theme change is a variable change and never a component edit.
+ *
+ * The palette is a warm neutral scale with one accent. Primary is near-black on light
+ * and near-white on dark — high-contrast neutral buttons read as considered, where a
+ * saturated brand button on every surface reads as a template.
+ */
+:root {
+  --bg: #fcfcfc;
+  --bg-subtle: #f6f6f7;
+  --card: #ffffff;
+  --elevated: #ffffff;
+  /* Measured on --card, the worst case: 18.5 / 8.1 / 5.0. `subtle` carries costs and
+     token counts, so it clears 4.5:1 rather than being decorative grey. */
+  --fg: #101012;
+  --fg-muted: #4d4d57;
+  --fg-subtle: #6e6e78;
+  --border: #e8e8ec;
+  --border-strong: #d4d4da;
+  --primary: #101012;
+  --primary-fg: #fbfbfc;
+  --accent: #9a5b00;
+  --accent-fill: #e0a93f;
+  --accent-wash: rgba(224, 169, 63, 0.1);
+  --success: #15803d;
+  --danger: #be2a2a;
+  --ring: #101012;
+  --shadow-color: 220 20% 40%;
+}
+
+.dark {
+  --bg: #0a0a0c;
+  --bg-subtle: #0f0f12;
+  --card: #101013;
+  --elevated: #17171b;
+  /* Measured on --card: 18.0 / 7.8 / 5.0. */
+  --fg: #f4f4f6;
+  --fg-muted: #a2a2ac;
+  --fg-subtle: #82828c;
+  --border: #212127;
+  --border-strong: #32323a;
+  --primary: #f4f4f6;
+  --primary-fg: #0a0a0c;
+  --accent: #e6b35a;
+  --accent-fill: #e0a93f;
+  --accent-wash: rgba(224, 169, 63, 0.09);
+  --success: #4ade80;
+  --danger: #f87171;
+  --ring: #e0a93f;
+  --shadow-color: 240 40% 2%;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-background-subtle: var(--bg-subtle);
+  --color-card: var(--card);
+  --color-elevated: var(--elevated);
+  --color-foreground: var(--fg);
+  --color-muted-foreground: var(--fg-muted);
+  --color-subtle-foreground: var(--fg-subtle);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-fg);
+  --color-accent: var(--accent);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-wash: var(--accent-wash);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+}
+
+/* One z-scale, so nothing needs a 9999. */
+@layer base {
+  :root {
+    --z-sticky: 10;
+    --z-drawer: 20;
+    --z-popover: 30;
+    --z-modal: 40;
+    --z-toast: 50;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    background-color: var(--bg);
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* One focus treatment, never removed without a replacement. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  ::selection {
+    background: var(--accent-fill);
+    color: #101012;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+}
+
+@layer utilities {
+  /* Latent-image shimmer. Infinite animation is reserved for real loading only. */
+  @keyframes develop {
+    0% {
+      background-position: 180% 0;
+    }
+    100% {
+      background-position: -180% 0;
+    }
+  }
+
+  .developing {
+    background-image: linear-gradient(
+      100deg,
+      var(--bg-subtle) 28%,
+      var(--accent-wash) 50%,
+      var(--bg-subtle) 72%
+    );
+    background-size: 220% 100%;
+    animation: develop 2s linear infinite;
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .rise {
+    animation: rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .pop-in {
+    animation: pop-in 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Soft, layered elevation — one hard shadow reads cheap. */
+  .lift {
+    box-shadow:
+      0 1px 2px -1px hsl(var(--shadow-color) / 0.14),
+      0 4px 12px -4px hsl(var(--shadow-color) / 0.12),
+      0 12px 32px -12px hsl(var(--shadow-color) / 0.14);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .developing {
+    background-image: linear-gradient(100deg, var(--bg-subtle), var(--elevated));
+  }
+}
