@@ -1,0 +1,27 @@
+[project]
+name = "emulsion-worker"
+version = "0.1.0"
+description = "Queue consumer. Runs jobs to completion with no HTTP timeout above it."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "emulsion-db",
+    "emulsion-engine",
+    "emulsion-platform",
+    "emulsion-providers",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/emulsion_worker"]
+
+[project.scripts]
+emulsion-worker = "emulsion_worker.main:main"
+
+[tool.uv.sources]
+emulsion-db = { workspace = true }
+emulsion-engine = { workspace = true }
+emulsion-platform = { workspace = true }
+emulsion-providers = { workspace = true }
