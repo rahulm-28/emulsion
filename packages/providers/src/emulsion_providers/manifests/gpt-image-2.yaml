@@ -1,0 +1,72 @@
+# gpt-image-2 on Azure AI Foundry.
+#
+# Provenance markers:
+#   confirmed  — measured against the live deployment on 2026-08-12
+#   inferred   — from ../gpt-image-2/generate.py's production use, or published pricing
+#   unverified — not established; absent rather than guessed
+#
+# Probe log: scratchpad probe_log.jsonl (session-scoped). Re-run /probe-foundry to refresh.
+
+id: gpt-image-2
+provider: azure-foundry
+
+modalities_in: [text, image]
+modalities_out: [image]
+
+pixels:
+  min: 655360           # inferred — generate.py, enforced in production
+  max: 8294400          # inferred
+  long_edge: 3840       # inferred
+  aspect: [0.33, 3.0]   # inferred
+  multiple_of: 16       # inferred — each edge must be a multiple of 16
+
+# confirmed: mask accepted (200), but 93.5% of pixels OUTSIDE the mask still shifted
+# (mean 6.46/255). Semantically preserved, not byte-identical. This is why M5 crops and
+# composites rather than trusting the mask.
+mask_support: soft
+
+transparency: false     # inferred — M6 post-processes instead
+edit_full_regen: true   # confirmed — autoregressive; every edit regenerates the whole image
+multi_reference: 16     # inferred — generate.py sends N files in the image[] field
+
+n_per_request: 2        # confirmed — n=2 returned 2 images in ONE request/rate-limit slot.
+                        # Cap above 2 is unverified.
+
+# confirmed — measured from x-ratelimit-* headers on a natural 429. A token bucket, not
+# an RPM cap. generate.py:223's "2 RPM" comment is wrong by ~5x.
+rate_limit:
+  requests: 2
+  window_s: 11
+
+max_input_bytes: 52428800   # inferred — 50 MB, generate.py guard
+input_formats: [png, jpg]   # inferred — HEIC must be converted first
+output_formats: [png, jpeg] # inferred
+
+# confirmed — 2025-04-01-preview works on BOTH /images/generations and /images/edits.
+# 2024-02-01 404s on edits. One version covers everything; no per-endpoint rewrite needed.
+api_version: "2025-04-01-preview"
+
+# confirmed — both header shapes authenticate identically on this deployment, so the
+# hosted (managed-identity bearer) and BYOK (user key) paths can share one code path.
+auth_headers: [bearer, api-key]
+
+prompt_profile: long_structured
+
+# Routing input for Auto (M0 §4.3). Unused until a second model exists.
+strengths:
+  text_rendering: high
+  structure: high
+  seam_blend: low
+
+# Token counts below are confirmed (from usage blocks: 107 @ 1024x640/low,
+# 1413 @ 2048x1152/medium, 13342 @ 3840x2160/high).
+# The USD rates are INFERRED from OpenAI's published gpt-image-1 pricing — Azure's own
+# rate card was not machine-readable. Confirm against a real invoice before pricing a
+# hosted tier: at these rates one 4K image is ~$0.53.
+cost_model:
+  usd_per_1m_input_tokens: 8.0
+  usd_per_1m_output_tokens: 40.0
+
+# confirmed — 400: "The model 'gpt-image-2' does not support the 'input_fidelity'
+# parameter." Model-level rejection, not an api-version artefact.
+unsupported_params: [input_fidelity]
