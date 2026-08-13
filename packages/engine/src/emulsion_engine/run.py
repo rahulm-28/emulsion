@@ -22,6 +22,9 @@ from emulsion_providers import (
 )
 from emulsion_providers.adapters.base import Adapter, GenerationParams, Result
 
+from .compile import CompiledPrompt, compile_prompt
+from .spec import DiagramSpec
+
 
 @dataclass(frozen=True)
 class JobSpec:
@@ -35,25 +38,29 @@ class JobSpec:
     output_format: str = "png"
     source_blob_ids: list[str] = field(default_factory=list)
     reference_blob_ids: list[str] = field(default_factory=list)
+    # Supplied when the caller already has structure — a spec editor, a saved house
+    # style, or a rerun. Absent means infer it from `prompt`.
+    diagram: DiagramSpec | None = None
+    house_legend: dict[str, str] | None = None
 
 
-def compile_prompt(user_intent: str, manifest: Manifest) -> str:
-    """Expand short user intent into the prompt the model actually needs.
+def build_request(spec: JobSpec, manifest: Manifest) -> tuple[Request, CompiledPrompt]:
+    """Assemble typed parts. Never a bare prompt string (M0 §4.5).
 
-    ponytail: pass-through. The real compiler is M2 and it is the product's whole
-    reason to exist — `prompt_profile` on the manifest (`long_structured` for
-    gpt-image-2) is the switch it will dispatch on. Kept as a named function so the
-    call site is already in the right place.
+    Returns the compiled prompt alongside the request so the caller can surface the
+    compiler's warnings — a spec with a dangling arrow produces a picture with an
+    invented box, and the user should hear about it before paying for the render.
     """
-    return user_intent
-
-
-def build_request(spec: JobSpec, manifest: Manifest) -> Request:
-    """Assemble typed parts. Never a bare prompt string (M0 §4.5)."""
-    parts: list = [TextPart(text=compile_prompt(spec.prompt, manifest))]
+    compiled = compile_prompt(
+        spec.prompt,
+        manifest,
+        spec=spec.diagram,
+        house_legend=spec.house_legend,
+    )
+    parts: list = [TextPart(text=compiled.text)]
     parts += [ImagePart(role="source", blob_id=b) for b in spec.source_blob_ids]
     parts += [ImagePart(role="reference", blob_id=b) for b in spec.reference_blob_ids]
-    return Request(parts=parts)
+    return Request(parts=parts), compiled
 
 
 def resolve_params(spec: JobSpec, manifest: Manifest) -> GenerationParams:
@@ -80,8 +87,14 @@ def run(
     manifest = (
         adapter.manifest if adapter.manifest.id == spec.model_id else load_manifest(spec.model_id)
     )
-    request = build_request(spec, manifest)
+    request, compiled = build_request(spec, manifest)
     params = resolve_params(spec, manifest)
     if on_progress:
+        source = "supplied spec" if spec.diagram else "inferred spec"
+        on_progress(
+            f"compiled prompt from {source}: {len(spec.prompt)} → {len(compiled.text)} chars"
+        )
+        for warning in compiled.warnings:
+            on_progress(f"prompt warning: {warning}")
         on_progress(f"resolved {params.width}x{params.height}, n={params.n}")
     return adapter.submit(request, params, blobs=blobs, on_progress=on_progress)
