@@ -2,6 +2,7 @@
 
 from .models import (
     Base,
+    HouseStyle,
     Image,
     Job,
     JobEvent,
@@ -24,6 +25,7 @@ from .session import (
 __all__ = [
     "Base",
     "DbQueue",
+    "HouseStyle",
     "Image",
     "Job",
     "JobEvent",

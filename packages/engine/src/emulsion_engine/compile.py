@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from emulsion_providers import Manifest
 
 from .spec import Component, Connection, DiagramSpec, Emphasis, Weight
+from .style import HouseStyle, merge_rules
 
 # --------------------------------------------------------------------------------------
 # Constraint packs
@@ -92,8 +93,16 @@ class CompiledPrompt:
 # --------------------------------------------------------------------------------------
 
 
-def render(spec: DiagramSpec, manifest: Manifest) -> CompiledPrompt:
-    """Turn a spec into the prompt this model's profile rewards."""
+def render(
+    spec: DiagramSpec, manifest: Manifest, *, style: HouseStyle | None = None
+) -> CompiledPrompt:
+    """Turn a spec into the prompt this model's profile rewards.
+
+    A house style contributes defaults and extra rules; the spec always wins on any
+    field it has already set.
+    """
+    if style is not None:
+        spec = style.apply_to(spec)
     warnings: list[str] = []
     lines: list[str] = []
 
@@ -132,11 +141,14 @@ def render(spec: DiagramSpec, manifest: Manifest) -> CompiledPrompt:
             lines.append(f'- {prefix}{anchor}"{callout.text}"')
 
     rules = PROFILE_RULES.get(manifest.prompt_profile, STRUCTURAL_RULES)
+    if style is not None:
+        rules = merge_rules(rules, style)
     if rules:
         lines.append("\nRules:")
         lines.extend(f"- {rule}" for rule in rules)
 
-    lines.append("\nStyle: " + ", ".join(STYLE_BASE) + ".")
+    style_words = [*STYLE_BASE, *(style.style_words if style else ())]
+    lines.append("\nStyle: " + ", ".join(style_words) + ".")
 
     warnings.extend(_validate(spec))
     return CompiledPrompt(text="\n".join(lines).strip(), warnings=tuple(warnings))
@@ -282,6 +294,7 @@ def compile_prompt(
     *,
     spec: DiagramSpec | None = None,
     house_legend: dict[str, str] | None = None,
+    style: HouseStyle | None = None,
 ) -> CompiledPrompt:
     """Expand short user intent into the prompt the model actually needs.
 
@@ -289,5 +302,7 @@ def compile_prompt(
     house style, a rerun of an earlier job). Otherwise one is inferred from the text.
     """
     if spec is None:
-        spec = infer_spec(user_intent, house_legend=house_legend)
-    return render(spec, manifest)
+        spec = infer_spec(
+            user_intent, house_legend=house_legend or (style.legend if style else None)
+        )
+    return render(spec, manifest, style=style)

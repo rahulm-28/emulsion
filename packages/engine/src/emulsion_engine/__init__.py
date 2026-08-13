@@ -11,6 +11,7 @@ from .compile import (
 )
 from .run import JobSpec, build_request, resolve_params, run
 from .spec import Callout, Component, Connection, DiagramSpec, Emphasis, Weight
+from .style import HouseStyle, Suggestion, extract_recurring, link_for_consistency, merge_rules
 
 __all__ = [
     "DEFAULT_LEGEND",
@@ -21,12 +22,17 @@ __all__ = [
     "Component",
     "Connection",
     "DiagramSpec",
+    "HouseStyle",
     "Emphasis",
     "JobSpec",
+    "Suggestion",
     "Weight",
     "build_request",
     "compile_prompt",
+    "extract_recurring",
     "infer_spec",
+    "link_for_consistency",
+    "merge_rules",
     "render",
     "resolve_params",
     "run",

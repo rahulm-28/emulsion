@@ -12,8 +12,9 @@ import logging
 import time
 from dataclasses import replace
 
+from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, new_id, session_scope, utcnow
-from emulsion_engine import JobSpec, run
+from emulsion_engine import HouseStyle, JobSpec, run
 from emulsion_imaging import build_pyramid, to_png
 from emulsion_providers import cost_usd, load_manifest
 from emulsion_providers.adapters import get_adapter
@@ -108,6 +109,8 @@ def process_job(job_id: str) -> None:
             size=job.size,
             n=job.n,
             source_blob_ids=[parent_key] if parent_key else [],
+            style=_house_style(session, job),
+            consistency_with=_previous_title(session, job),
         )
 
     emit(job_id, "status", "running")
@@ -195,6 +198,40 @@ def process_job(job_id: str) -> None:
         for dropped in result.dropped:
             emit(job_id, "warning", f"dropped {dropped.kind}: {dropped.reason}")
     emit(job_id, "status", "succeeded")
+
+
+def _house_style(session, job: Job) -> HouseStyle | None:  # noqa: ANN001
+    """The session's house style, as the engine's plain dataclass.
+
+    The ORM row stays in the database layer; the engine sees a frozen dataclass with no
+    session attached to it (invariant 2).
+    """
+    chat = job.session
+    if chat is None or not chat.style_id:
+        return None
+    row = session.get(HouseStyleRow, chat.style_id)
+    if row is None:
+        return None
+    return HouseStyle(
+        name=row.name,
+        legend=json.loads(row.legend_json or "{}"),
+        rules=tuple(json.loads(row.rules_json or "[]")),
+        layout=row.layout or "",
+        style_words=tuple(json.loads(row.style_words_json or "[]")),
+    )
+
+
+def _previous_title(session, job: Job) -> str:  # noqa: ANN001
+    """The title of the last diagram in this session, when the user asked for a deck.
+
+    Opt-in per session: linking every picture to the previous one is right for a deck
+    and wrong for a scratch pad, and only the user knows which this is.
+    """
+    chat = job.session
+    if chat is None or not chat.link_consistency:
+        return ""
+    earlier = [j for j in chat.jobs if j.id != job.id and j.status == JobStatus.SUCCEEDED]
+    return earlier[-1].prompt[:80] if earlier else ""
 
 
 def _parent_blob_keys(session, job: Job) -> list[str]:  # noqa: ANN001

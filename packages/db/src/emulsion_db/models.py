@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -42,6 +43,28 @@ class JobStatus:
     TERMINAL = frozenset({SUCCEEDED, FAILED})
 
 
+class HouseStyle(Base):
+    """A named, reusable set of diagram defaults.
+
+    JSON columns because the shape is a small bag of user-authored strings that is read
+    whole and never queried by its contents — a normalised legend table would be three
+    joins to reconstruct one dictionary.
+    """
+
+    __tablename__ = "house_styles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120))
+    legend_json: Mapped[str] = mapped_column(Text, default="{}")
+    rules_json: Mapped[str] = mapped_column(Text, default="[]")
+    style_words_json: Mapped[str] = mapped_column(Text, default="[]")
+    layout: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
 class Session(Base):
     """A conversation. Jobs belong to one, which is what makes history navigable."""
 
@@ -50,6 +73,10 @@ class Session(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(200), default="Untitled")
     model_id: Mapped[str] = mapped_column(String(64), default="gpt-image-2")
+    style_id: Mapped[str | None] = mapped_column(ForeignKey("house_styles.id", ondelete="SET NULL"))
+    # Off by default: linking every diagram to the previous one is right for a deck and
+    # wrong for a scratch session, and the user knows which this is.
+    link_consistency: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True

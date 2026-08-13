@@ -70,10 +70,37 @@ export interface SessionOut {
   model_id: string;
   job_count: number;
   image_count: number;
+  style_id: string | null;
+  link_consistency: boolean;
   cost_usd: number;
   thumbnail_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface StyleIn {
+  name: string;
+  legend?: Record<string, string>;
+  rules?: string[];
+  style_words?: string[];
+  layout?: string;
+}
+
+export interface StyleOut {
+  id: string;
+  name: string;
+  legend: Record<string, string>;
+  rules: string[];
+  style_words: string[];
+  layout: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SuggestionOut {
+  text: string;
+  occurrences: number;
+  examples: string[];
 }
 
 export interface ModelOut {
@@ -129,14 +156,56 @@ export async function listSessionJobs(sessionId: string): Promise<JobOut[]> {
   return json(await fetch(`/v1/sessions/${sessionId}/jobs`, noStore));
 }
 
-export async function renameSession(id: string, title: string): Promise<SessionOut> {
+export async function patchSession(
+  id: string,
+  patch: { title?: string; style_id?: string | null; link_consistency?: boolean },
+): Promise<SessionOut> {
   return json(
     await fetch(`/v1/sessions/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(patch),
     }),
   );
+}
+
+export async function renameSession(id: string, title: string): Promise<SessionOut> {
+  return patchSession(id, { title });
+}
+
+export async function listStyles(): Promise<StyleOut[]> {
+  return json(await fetch("/v1/styles", noStore));
+}
+
+export async function listSuggestions(): Promise<SuggestionOut[]> {
+  return json(await fetch("/v1/styles/suggestions?min_occurrences=3", noStore));
+}
+
+export async function createStyle(body: StyleIn): Promise<StyleOut> {
+  return json(
+    await fetch("/v1/styles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function updateStyle(id: string, body: StyleIn): Promise<StyleOut> {
+  return json(
+    await fetch(`/v1/styles/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function deleteStyle(id: string): Promise<void> {
+  const response = await fetch(`/v1/styles/${id}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`could not delete style (${response.status})`);
+  }
 }
 
 export async function deleteSession(id: string): Promise<void> {

@@ -15,8 +15,10 @@ import threading
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, get_sessionmaker, utcnow
 from emulsion_db import Session as DbSession
+from emulsion_engine import extract_recurring
 from emulsion_providers import SIZE_PRESETS, available_models, load_manifest
 from emulsion_worker import blob_store, bootstrap, queue, run_forever, settings
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -36,6 +38,9 @@ from .schemas import (
     ModelOut,
     RegionIn,
     SessionOut,
+    StyleIn,
+    StyleOut,
+    SuggestionOut,
     UpdateSessionRequest,
 )
 
@@ -156,6 +161,8 @@ def _session_out(session: DbSession) -> SessionOut:
         id=session.id,
         title=session.title,
         model_id=session.model_id,
+        style_id=session.style_id,
+        link_consistency=session.link_consistency,
         job_count=len(session.jobs),
         image_count=len(images),
         cost_usd=round(sum(job.cost_usd or 0.0 for job in session.jobs), 6),
@@ -167,6 +174,19 @@ def _session_out(session: DbSession) -> SessionOut:
         ),
         created_at=session.created_at,
         updated_at=session.updated_at,
+    )
+
+
+def _style_out(row: HouseStyleRow) -> StyleOut:
+    return StyleOut(
+        id=row.id,
+        name=row.name,
+        legend=json.loads(row.legend_json or "{}"),
+        rules=json.loads(row.rules_json or "[]"),
+        style_words=json.loads(row.style_words_json or "[]"),
+        layout=row.layout or "",
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 
@@ -291,6 +311,81 @@ def create_job(
     return _job_out(job)
 
 
+@app.get("/v1/styles", response_model=list[StyleOut])
+def list_styles(session: SessionDep) -> list[StyleOut]:
+    rows = (
+        session.execute(select(HouseStyleRow).order_by(HouseStyleRow.updated_at.desc()))
+        .scalars()
+        .all()
+    )
+    return [_style_out(r) for r in rows]
+
+
+@app.post("/v1/styles", response_model=StyleOut, status_code=201)
+def create_style(body: StyleIn, session: SessionDep) -> StyleOut:
+    row = HouseStyleRow(
+        name=body.name,
+        legend_json=json.dumps(body.legend),
+        rules_json=json.dumps(body.rules),
+        style_words_json=json.dumps(body.style_words),
+        layout=body.layout,
+    )
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return _style_out(row)
+
+
+@app.patch("/v1/styles/{style_id}", response_model=StyleOut)
+def update_style(style_id: str, body: StyleIn, session: SessionDep) -> StyleOut:
+    row = session.get(HouseStyleRow, style_id)
+    if row is None:
+        raise HTTPException(404, "style not found")
+    row.name = body.name
+    row.legend_json = json.dumps(body.legend)
+    row.rules_json = json.dumps(body.rules)
+    row.style_words_json = json.dumps(body.style_words)
+    row.layout = body.layout
+    row.updated_at = utcnow()
+    session.commit()
+    session.refresh(row)
+    return _style_out(row)
+
+
+@app.delete("/v1/styles/{style_id}", status_code=204)
+def delete_style(style_id: str, session: SessionDep) -> None:
+    row = session.get(HouseStyleRow, style_id)
+    if row is None:
+        raise HTTPException(404, "style not found")
+    # Sessions referencing it fall back to no style rather than cascading away.
+    session.delete(row)
+    session.commit()
+
+
+@app.get("/v1/styles/suggestions", response_model=list[SuggestionOut])
+def style_suggestions(
+    session: SessionDep,
+    min_occurrences: Annotated[int, Query(ge=2, le=20)] = 3,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> list[SuggestionOut]:
+    """Clauses the user keeps typing, with the prompts that produced them.
+
+    Suggestions only — nothing is applied until it is promoted into a style. A learned
+    constraint the user cannot see or overrule is one that will eventually ruin a
+    picture for reasons nobody can debug.
+    """
+    prompts = (
+        session.execute(select(Job.prompt).order_by(Job.created_at.desc()).limit(400))
+        .scalars()
+        .all()
+    )
+    found = extract_recurring(list(prompts), min_occurrences=min_occurrences)
+    return [
+        SuggestionOut(text=s.text, occurrences=s.occurrences, examples=list(s.examples))
+        for s in found[:limit]
+    ]
+
+
 @app.get("/v1/sessions", response_model=list[SessionOut])
 def list_sessions(
     session: SessionDep, limit: Annotated[int, Query(ge=1, le=200)] = 100
@@ -321,7 +416,14 @@ def rename_session(session_id: str, body: UpdateSessionRequest, session: Session
     chat = session.get(DbSession, session_id)
     if chat is None:
         raise HTTPException(404, "session not found")
-    chat.title = body.title
+    if body.title is not None:
+        chat.title = body.title
+    if body.style_id is not None:
+        if body.style_id and session.get(HouseStyleRow, body.style_id) is None:
+            raise HTTPException(404, f"unknown style {body.style_id!r}")
+        chat.style_id = body.style_id or None
+    if body.link_consistency is not None:
+        chat.link_consistency = body.link_consistency
     session.commit()
     session.refresh(chat)
     return _session_out(chat)

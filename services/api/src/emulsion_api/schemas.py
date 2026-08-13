@@ -40,14 +40,40 @@ class CreateJobRequest(BaseModel):
         return self
 
 
+class StyleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    legend: dict[str, str] = Field(default_factory=dict)
+    rules: list[str] = Field(default_factory=list)
+    style_words: list[str] = Field(default_factory=list)
+    layout: str = ""
+
+
+class StyleOut(StyleIn):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SuggestionOut(BaseModel):
+    """A constraint the user keeps typing, with the evidence for it."""
+
+    text: str
+    occurrences: int
+    examples: list[str]
+
+
 class UpdateSessionRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    style_id: str | None = None
+    link_consistency: bool | None = None
 
 
 class SessionOut(BaseModel):
     id: str
     title: str
     model_id: str
+    style_id: str | None
+    link_consistency: bool
     job_count: int
     image_count: int
     cost_usd: float

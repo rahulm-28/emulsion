@@ -124,6 +124,12 @@ Dropdown, Tooltip, Dialog) — no native form controls.
 - **Inspector** with output facts, token/cost accounting, the full event trace, version
   lineage, and the model's measured capabilities
 - **Edit any image** to start a new version; lineage is walkable both ways
+- **House styles** — a named legend, extra rules and a layout that every diagram in a
+  conversation inherits; anything typed for one diagram still wins
+- **Deck consistency**, opt-in per conversation — asks the model to match the previous
+  picture, so a set reads as a deck
+- **Learned constraints** — clauses you keep typing are surfaced with the prompts that
+  produced them, and only apply once you add them to a style
 - **Draw an area to edit just that part** — the region is grown to a size the model
   accepts and snapped onto whitespace, and everything outside it stays byte-identical
 

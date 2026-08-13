@@ -22,8 +22,9 @@ from emulsion_providers import (
 )
 from emulsion_providers.adapters.base import Adapter, GenerationParams, Result
 
-from .compile import CompiledPrompt, compile_prompt
+from .compile import CompiledPrompt, compile_prompt, infer_spec
 from .spec import DiagramSpec
+from .style import HouseStyle, link_for_consistency
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,9 @@ class JobSpec:
     # style, or a rerun. Absent means infer it from `prompt`.
     diagram: DiagramSpec | None = None
     house_legend: dict[str, str] | None = None
+    style: HouseStyle | None = None
+    # Title of the previous diagram in this session, when the user asked for a deck.
+    consistency_with: str = ""
 
 
 def build_request(spec: JobSpec, manifest: Manifest) -> tuple[Request, CompiledPrompt]:
@@ -51,11 +55,18 @@ def build_request(spec: JobSpec, manifest: Manifest) -> tuple[Request, CompiledP
     compiler's warnings — a spec with a dangling arrow produces a picture with an
     invented box, and the user should hear about it before paying for the render.
     """
+    diagram = spec.diagram
+    if spec.consistency_with:
+        diagram = link_for_consistency(
+            diagram if diagram is not None else infer_spec(spec.prompt),
+            spec.consistency_with,
+        )
     compiled = compile_prompt(
         spec.prompt,
         manifest,
-        spec=spec.diagram,
+        spec=diagram,
         house_legend=spec.house_legend,
+        style=spec.style,
     )
     parts: list = [TextPart(text=compiled.text)]
     parts += [ImagePart(role="source", blob_id=b) for b in spec.source_blob_ids]

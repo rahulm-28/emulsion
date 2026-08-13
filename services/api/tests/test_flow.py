@@ -359,3 +359,100 @@ def test_session_thumbnail_uses_the_gallery_derivative(client):
     sessions = client.get("/v1/sessions").json()
     mine = next(s for s in sessions if s["id"] == job["session_id"])
     assert mine["thumbnail_url"].endswith(".gallery.webp")
+
+
+# -- house styles and learned constraints ---------------------------------------------
+
+
+def make_style(client, **overrides) -> dict:
+    body = {
+        "name": "Deck",
+        "legend": {"ai": "Teal = models"},
+        "rules": ["Use sentence case for every label."],
+        "style_words": ["muted palette"],
+        "layout": "three columns, left to right",
+    } | overrides
+    response = client.post("/v1/styles", json=body)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_a_style_round_trips(client):
+    created = make_style(client)
+    assert created["legend"] == {"ai": "Teal = models"}
+
+    listed = client.get("/v1/styles").json()
+    assert created["id"] in [s["id"] for s in listed]
+
+    updated = client.patch(
+        f"/v1/styles/{created['id']}",
+        json={"name": "Deck v2", "legend": {}, "rules": [], "style_words": [], "layout": ""},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Deck v2"
+
+    assert client.delete(f"/v1/styles/{created['id']}").status_code == 204
+    assert client.delete(f"/v1/styles/{created['id']}").status_code == 404
+
+
+def test_suggestions_is_not_shadowed_by_the_id_route(client):
+    """`/v1/styles/suggestions` must not be parsed as a style id."""
+    response = client.get("/v1/styles/suggestions")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_a_style_reaches_the_compiled_prompt(client):
+    style = make_style(client)
+    job = submit(client, prompt="a pipeline diagram")
+    assert (
+        client.patch(
+            f"/v1/sessions/{job['session_id']}", json={"style_id": style["id"]}
+        ).status_code
+        == 200
+    )
+
+    second = submit(client, prompt="another pipeline", session_id=job["session_id"])
+    done = drain(client, second["id"])
+    trail = " ".join(e["message"] for e in done["events"])
+    # The compiler reports how far it expanded the intent; a style makes it longer.
+    assert "compiled prompt" in trail
+
+
+def test_unknown_style_on_a_session_is_rejected(client):
+    job = submit(client, prompt="x")
+    response = client.patch(f"/v1/sessions/{job['session_id']}", json={"style_id": "nope"})
+    assert response.status_code == 404
+
+
+def test_deleting_a_style_leaves_its_sessions_alive(client):
+    style = make_style(client, name="Temporary")
+    job = submit(client, prompt="keep me")
+    client.patch(f"/v1/sessions/{job['session_id']}", json={"style_id": style["id"]})
+
+    assert client.delete(f"/v1/styles/{style['id']}").status_code == 204
+    sessions = client.get("/v1/sessions").json()
+    mine = next(s for s in sessions if s["id"] == job["session_id"])
+    assert mine["style_id"] is None
+
+
+def test_consistency_linking_is_opt_in_per_session(client):
+    job = submit(client, prompt="first diagram")
+    sessions = client.get("/v1/sessions").json()
+    mine = next(s for s in sessions if s["id"] == job["session_id"])
+    assert mine["link_consistency"] is False
+
+    response = client.patch(f"/v1/sessions/{job['session_id']}", json={"link_consistency": True})
+    assert response.json()["link_consistency"] is True
+
+
+def test_suggestions_surface_a_repeated_clause(client):
+    for index in range(4):
+        submit(client, prompt=f"diagram {index}, no gridlines, flat vector")
+    found = client.get("/v1/styles/suggestions?min_occurrences=3").json()
+    texts = [s["text"] for s in found]
+    assert "no gridlines" in texts
+
+    entry = next(s for s in found if s["text"] == "no gridlines")
+    assert entry["occurrences"] >= 3
+    assert entry["examples"]  # evidence travels with the suggestion

@@ -17,6 +17,7 @@ import {
   listModels,
   listSessionJobs,
   listSessions,
+  patchSession,
   renameSession,
   streamJob,
   type HealthOut,
@@ -59,6 +60,10 @@ export default function Studio() {
   const [count, setCount] = useState(1);
   const [parent, setParent] = useState<ImageOut | null>(null);
   const [region, setRegion] = useState<Region | null>(null);
+  // A style can be chosen before the conversation exists; it is applied to the session
+  // the moment one is created.
+  const [pendingStyleId, setPendingStyleId] = useState<string | null>(null);
+  const [pendingLink, setPendingLink] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +106,8 @@ export default function Studio() {
         if (!live) return;
         setJobs(found);
         setSelected(found.at(-1)?.images.at(-1) ?? null);
+        setPendingStyleId(null);
+        setPendingLink(false);
       })
       .catch(() => live && setJobs([]));
     return () => {
@@ -146,6 +153,12 @@ export default function Studio() {
       upsertJob(created);
       setParent(null);
       setRegion(null);
+      if (!sessionId && created.session_id && (pendingStyleId || pendingLink)) {
+        await patchSession(created.session_id, {
+          style_id: pendingStyleId ?? "",
+          link_consistency: pendingLink,
+        });
+      }
       refreshSessions().catch(() => undefined);
 
       unsubscribe.current = streamJob(created.id, {
@@ -209,6 +222,20 @@ export default function Studio() {
   async function handleDelete(id: string) {
     await deleteSession(id);
     if (id === sessionId) startNew();
+    refreshSessions().catch(() => undefined);
+  }
+
+  async function applyStyle(styleId: string | null) {
+    setPendingStyleId(styleId);
+    if (!sessionId) return;
+    await patchSession(sessionId, { style_id: styleId ?? "" });
+    refreshSessions().catch(() => undefined);
+  }
+
+  async function applyLinkConsistency(value: boolean) {
+    setPendingLink(value);
+    if (!sessionId) return;
+    await patchSession(sessionId, { link_consistency: value });
     refreshSessions().catch(() => undefined);
   }
 
@@ -319,6 +346,10 @@ export default function Studio() {
           }}
           region={region}
           onRegion={setRegion}
+          styleId={activeSession?.style_id ?? pendingStyleId}
+          linkConsistency={activeSession?.link_consistency ?? pendingLink}
+          onStyle={applyStyle}
+          onLinkConsistency={applyLinkConsistency}
           busy={busy}
           onSubmit={submit}
           onStop={stopWatching}

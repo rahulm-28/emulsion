@@ -38,7 +38,7 @@ placeholder — **no module is finished**, and each still needs its own spec.
 | **M4** Generation flow — chat UI, job progress, history, reruns | 🟨 prompt → SSE progress → library works; no chat, no reruns |
 | **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | 🟨 region crop-composite works end to end — draw an area, edit it, rest of the image stays byte-identical (asserted through the API in a test); **no conversational edit, no mask path** |
 | **M6** Post-processing — upscale, transparency, export, vector text layer | 🟨 derivative pyramid written on every image and served to the UI; **no upscale, no transparency, no vector text** |
-| **M7** Intelligence — learned constraints, house styles, deck consistency | ⬜ |
+| **M7** Intelligence — learned constraints, house styles, deck consistency | 🟨 house styles, opt-in deck consistency, and clause-counted suggestions with visible evidence; **suggestions are never auto-applied**, no cross-user learning |
 | **M8** Plans & billing — BYOK vs hosted routing, quotas, metering, Stripe | ⬜ |
 
 Modules are completed **one at a time, in order**. Each gets: brainstorm → spec → plan →

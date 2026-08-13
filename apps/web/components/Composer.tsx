@@ -4,6 +4,7 @@ import { ArrowUp, Copy, Layers, Square, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ImageOut, ModelOut, Region } from "@/lib/api";
 import { RegionPicker } from "@/components/RegionPicker";
+import { StylePanel } from "@/components/StylePanel";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -41,6 +42,10 @@ interface Props {
   onClearParent: () => void;
   region: Region | null;
   onRegion: (region: Region | null) => void;
+  styleId: string | null;
+  linkConsistency: boolean;
+  onStyle: (styleId: string | null) => void;
+  onLinkConsistency: (value: boolean) => void;
   busy: boolean;
   onSubmit: () => void;
   onStop: () => void;
@@ -60,6 +65,10 @@ export function Composer({
   onClearParent,
   region,
   onRegion,
+  styleId,
+  linkConsistency,
+  onStyle,
+  onLinkConsistency,
   busy,
   onSubmit,
   onStop,
@@ -211,6 +220,14 @@ export function Composer({
                 </SelectGroup>
               </SelectContent>
             </Select>
+
+            <StylePanel
+              activeStyleId={styleId}
+              linkConsistency={linkConsistency}
+              disabled={busy}
+              onPick={onStyle}
+              onLinkConsistency={onLinkConsistency}
+            />
 
             <div className="ml-auto flex items-center gap-1.5">
               {busy ? (
