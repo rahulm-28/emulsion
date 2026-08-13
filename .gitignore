@@ -25,10 +25,15 @@ out/
 .turbo/
 *.tsbuildinfo
 
-# local data
+# local data — sqlite db and the filesystem blob store
+.data/
 scratch/
 tmp/
 *.local
+
+# browser-driven checks
+.playwright-mcp/
+emulsion-*.png
 
 # generated images — never commit, they are 1.4-13.4MB each
 generated/

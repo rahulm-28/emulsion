@@ -1,0 +1,45 @@
+[project]
+name = "emulsion"
+version = "0.1.0"
+description = "Image generation studio — workspace root."
+requires-python = ">=3.12,<3.13"
+# Members are listed here so a plain `uv sync` installs them; without this the root
+# environment resolves to dev tools only. Add each new workspace package to both lists.
+dependencies = [
+    "emulsion-api",
+    "emulsion-db",
+    "emulsion-engine",
+    "emulsion-platform",
+    "emulsion-providers",
+    "emulsion-worker",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*", "services/*"]
+
+[tool.uv.sources]
+emulsion-api = { workspace = true }
+emulsion-db = { workspace = true }
+emulsion-engine = { workspace = true }
+emulsion-platform = { workspace = true }
+emulsion-providers = { workspace = true }
+emulsion-worker = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Specs are the source of truth and are approved as written. ruff formats fenced Python
+# blocks inside markdown, which silently rewrites them — keep it out of docs entirely.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "services"]

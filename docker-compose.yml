@@ -1,0 +1,35 @@
+# The production-shaped local stack: Postgres and Azurite instead of SQLite and the
+# filesystem. Optional — `make dev` runs the same code with neither.
+#
+# Azurite matters because it emulates Blob AND Queue, so local development exercises the
+# real BlobStore and Queue implementations rather than stubs (M0 §9).
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: emulsion
+      POSTGRES_PASSWORD: emulsion
+      POSTGRES_DB: emulsion
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emulsion"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --location /data
+    ports:
+      - "10000:10000" # blob
+      - "10001:10001" # queue
+    volumes:
+      - azurite-data:/data
+
+volumes:
+  postgres-data:
+  azurite-data:
