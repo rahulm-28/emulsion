@@ -33,11 +33,11 @@ placeholder — **no module is finished**, and each still needs its own spec.
 |---|---|
 | **M0** Foundations — stack, execution model, deploy, config | ✅ spec approved |
 | **M1** Provider layer — adapters, auth modes, retry, cost accounting | 🟨 manifests, sizing, cost, throttle, echo + foundry adapters built; **no spec, no managed identity, no BYOK** |
-| **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | 🟨 param resolver done; **`compile_prompt` is a pass-through stub**, no ranking |
+| **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | 🟨 prompt compiler + constraint packs + spec validation built; ranking primitives built in `imaging`; **no spec, not wired to a UI spec editor** |
 | **M3** App shell — auth, workspaces, sessions, storage, library | 🟨 storage + library + lineage work; **no auth, no workspaces, single implicit user** |
 | **M4** Generation flow — chat UI, job progress, history, reruns | 🟨 prompt → SSE progress → library works; no chat, no reruns |
-| **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | ⬜ |
-| **M6** Post-processing — upscale, transparency, export, vector text layer | ⬜ |
+| **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | 🟨 `packages/imaging`: gutter snap, align, colour match, seam/drift scoring, composite + **invariant enforced in code**; **no API route, no region UI** |
+| **M6** Post-processing — upscale, transparency, export, vector text layer | 🟨 derivative pyramid (archival PNG + 2048 WebP + 512 WebP) built; **not wired into the worker**, no upscale/transparency/vector |
 | **M7** Intelligence — learned constraints, house styles, deck consistency | ⬜ |
 | **M8** Plans & billing — BYOK vs hosted routing, quotas, metering, Stripe | ⬜ |
 

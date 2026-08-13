@@ -38,10 +38,10 @@ publicly because the problem is not unique to me — if you generate technical i
 have hit the same walls, take it, run it, change it. It runs entirely on your machine with
 no cloud account and no API key (see below), so trying it costs nothing.
 
-**Fair warning on where it actually is:** the app shell works end to end, but the part
-that matters most — the prompt compiler in `packages/engine` — is still a pass-through
-stub. That is the next thing being built. Read [CLAUDE.md](CLAUDE.md) for an honest
-per-module status before assuming a feature exists.
+**Fair warning on where it actually is:** the app shell works end to end and the prompt
+compiler is real, but the region-edit pipeline in `packages/imaging` is not yet wired to
+an API route or a UI — the primitives and their tests exist, the button does not. Read
+[CLAUDE.md](CLAUDE.md) for an honest per-module status before assuming a feature exists.
 
 ---
 
@@ -102,7 +102,8 @@ make web    # in a third
 | `packages/platform` | The three portability protocols + filesystem/env implementations |
 | `packages/db` | Jobs, events, images with lineage, queue table |
 | `packages/providers` | Manifests, sizing, cost, throttle, `echo` + `foundry` adapters |
-| `packages/engine` | Param resolution and typed-part assembly. **Prompt compiler is a pass-through — that is M2** |
+| `packages/engine` | **Prompt compiler** — structured diagram spec, constraint packs, spec validation |
+| `packages/imaging` | Gutter snapping, alignment, colour matching, seam scoring, composite, derivative pyramid |
 | `services/api` | FastAPI: create job, list, SSE progress, library, lineage |
 | `services/worker` | Queue consumer, inline or standalone |
 | `apps/web` | Next.js studio — conversations, model picker, live pipeline, inspector, lineage |
