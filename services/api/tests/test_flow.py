@@ -220,3 +220,142 @@ def test_job_exposes_its_event_trail(client):
     assert "status" in kinds
     assert any("resolved 1024x1024" in m for m in messages)
     assert [e["seq"] for e in done["events"]] == sorted(e["seq"] for e in done["events"])
+
+
+# -- region edits --------------------------------------------------------------------
+
+
+def _pixels(client, url: str):
+    import io
+
+    import numpy as np
+    from PIL import Image as PILImage
+
+    response = client.get(url)
+    assert response.status_code == 200, url
+    with PILImage.open(io.BytesIO(response.content)) as image:
+        return np.array(image.convert("RGB"), dtype=np.uint8)
+
+
+def _edited_rect(job: dict) -> tuple[int, int, int, int]:
+    """The rect the worker actually edited, from its own progress event.
+
+    The requested region is grown to a legal size and snapped onto gutters, so the
+    stored region is not the rect that was composited.
+    """
+    for event in job["events"]:
+        if event["message"].startswith("region "):
+            inside = event["message"].split("at (")[1].split(")")[0]
+            left, top, right, bottom = (int(v.strip()) for v in inside.split(","))
+            return left, top, right, bottom
+    raise AssertionError(f"no region event in {[e['message'] for e in job['events']]}")
+
+
+def test_region_edit_leaves_the_rest_of_the_image_byte_identical(client):
+    """Invariant 5, end to end through the API rather than in a unit test."""
+    first = submit(client, prompt="a four-zone diagram", size="2k")
+    parent = drain(client, first["id"])["images"][0]
+
+    edit = submit(
+        client,
+        prompt="make the lower right zone red",
+        size="2k",
+        parent_image_id=parent["id"],
+        region={"left": 1200, "top": 1200, "right": 1700, "bottom": 1600},
+    )
+    done = drain(client, edit["id"])
+    assert done["status"] == "succeeded", done["error"]
+
+    before = _pixels(client, parent["url"])
+    after = _pixels(client, done["images"][0]["url"])
+    assert before.shape == after.shape
+
+    left, top, right, bottom = _edited_rect(done)
+    masked_before = before.copy()
+    masked_after = after.copy()
+    masked_before[top:bottom, left:right] = 0
+    masked_after[top:bottom, left:right] = 0
+    assert (masked_before == masked_after).all(), "pixels outside the edited rect moved"
+
+    # And the inside genuinely changed, so the test is not passing trivially.
+    assert not (before[top:bottom, left:right] == after[top:bottom, left:right]).all()
+
+
+def test_region_is_grown_to_a_size_the_model_accepts(client):
+    first = submit(client, prompt="parent", size="2k")
+    parent = drain(client, first["id"])["images"][0]
+
+    edit = submit(
+        client,
+        prompt="tweak",
+        size="2k",
+        parent_image_id=parent["id"],
+        region={"left": 100, "top": 100, "right": 180, "bottom": 150},  # far too small
+    )
+    done = drain(client, edit["id"])
+    assert done["status"] == "succeeded", done["error"]
+
+    left, top, right, bottom = _edited_rect(done)
+    width, height = right - left, bottom - top
+    assert width % 16 == 0 and height % 16 == 0
+    assert width * height >= 655_360
+
+
+def test_region_without_a_parent_is_rejected(client):
+    response = client.post(
+        "/v1/jobs",
+        json={
+            "prompt": "x",
+            "size": "1k",
+            "region": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+        },
+    )
+    assert response.status_code == 422
+    assert "parent_image_id" in response.text
+
+
+def test_inverted_region_is_rejected(client):
+    response = client.post(
+        "/v1/jobs",
+        json={
+            "prompt": "x",
+            "size": "1k",
+            "parent_image_id": "whatever",
+            "region": {"left": 200, "top": 0, "right": 100, "bottom": 100},
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_region_on_a_too_small_parent_fails_with_a_useful_message(client):
+    """A 1k parent can still yield a legal crop; a tiny one cannot, and the user is
+    told to edit the whole image rather than left with a silent failure."""
+    from emulsion_imaging import expand_to_legal
+    from emulsion_imaging.gutters import Rect
+
+    assert expand_to_legal(Rect(0, 0, 50, 50), 400, 400) is None
+    assert expand_to_legal(Rect(0, 0, 50, 50), 2048, 2048) is not None
+
+
+# -- derivative pyramid ---------------------------------------------------------------
+
+
+def test_images_carry_viewer_and_gallery_derivatives(client):
+    job = submit(client, prompt="derivatives please", size="2k")
+    image = drain(client, job["id"])["images"][0]
+
+    assert image["viewer_url"].endswith(".viewer.webp")
+    assert image["gallery_url"].endswith(".gallery.webp")
+
+    archival = client.get(image["url"]).content
+    viewer = client.get(image["viewer_url"]).content
+    gallery = client.get(image["gallery_url"]).content
+    assert len(gallery) < len(viewer) < len(archival)
+
+
+def test_session_thumbnail_uses_the_gallery_derivative(client):
+    job = submit(client, prompt="thumbnail check", size="1k")
+    drain(client, job["id"])
+    sessions = client.get("/v1/sessions").json()
+    mine = next(s for s in sessions if s["id"] == job["session_id"])
+    assert mine["thumbnail_url"].endswith(".gallery.webp")

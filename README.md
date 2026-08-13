@@ -38,10 +38,11 @@ publicly because the problem is not unique to me — if you generate technical i
 have hit the same walls, take it, run it, change it. It runs entirely on your machine with
 no cloud account and no API key (see below), so trying it costs nothing.
 
-**Fair warning on where it actually is:** the app shell works end to end and the prompt
-compiler is real, but the region-edit pipeline in `packages/imaging` is not yet wired to
-an API route or a UI — the primitives and their tests exist, the button does not. Read
-[CLAUDE.md](CLAUDE.md) for an honest per-module status before assuming a feature exists.
+**Fair warning on where it actually is:** generation, region editing, sessions, lineage
+and cost accounting all work end to end. What is missing is accounts, billing, and the
+learned-constraint work — and there is no conversational edit yet, only draw-an-area.
+Read [CLAUDE.md](CLAUDE.md) for an honest per-module status before assuming a feature
+exists.
 
 ---
 
@@ -123,6 +124,8 @@ Dropdown, Tooltip, Dialog) — no native form controls.
 - **Inspector** with output facts, token/cost accounting, the full event trace, version
   lineage, and the model's measured capabilities
 - **Edit any image** to start a new version; lineage is walkable both ways
+- **Draw an area to edit just that part** — the region is grown to a size the model
+  accepts and snapped onto whitespace, and everything outside it stays byte-identical
 
 Theme is a three-way control (light / system / dark) — "system" is a real preference, and
 a two-way flip means the app stops following the OS the first time it's clicked.

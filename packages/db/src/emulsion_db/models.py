@@ -88,6 +88,10 @@ class Job(Base):
     parent_image_id: Mapped[str | None] = mapped_column(
         ForeignKey("images.id", ondelete="SET NULL")
     )
+    # "left,top,right,bottom" in parent-image pixels, when this job edits a region.
+    # Stored flat rather than as JSON because it is four integers that are always
+    # present together, and a region is queried by "is there one" far more than by value.
+    region: Mapped[str | None] = mapped_column(String(64))
 
     error: Mapped[str | None] = mapped_column(Text)
     # Parts the adapter could not send, as JSON. Surfaced to the user (invariant 7).
@@ -140,6 +144,10 @@ class Image(Base):
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"))
 
     blob_key: Mapped[str] = mapped_column(String(300))
+    # Derivative pyramid. Archival stays in blob_key; these two are what the UI loads,
+    # because serving a 13 MB PNG to a thumbnail grid is how the bandwidth bill goes.
+    viewer_key: Mapped[str | None] = mapped_column(String(300))
+    gallery_key: Mapped[str | None] = mapped_column(String(300))
     content_type: Mapped[str] = mapped_column(String(64), default="image/png")
     width: Mapped[int] = mapped_column(Integer)
     height: Mapped[int] = mapped_column(Integer)

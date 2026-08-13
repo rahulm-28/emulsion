@@ -217,7 +217,7 @@ export function Thread({ jobs, selectedImageId, onSelectImage, onEdit }: Props) 
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={image.url}
+                          src={image.viewer_url}
                           alt={image.prompt}
                           loading="lazy"
                           className="w-full object-cover"

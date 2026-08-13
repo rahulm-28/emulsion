@@ -4,7 +4,20 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class RegionIn(BaseModel):
+    left: int = Field(ge=0)
+    top: int = Field(ge=0)
+    right: int = Field(ge=0)
+    bottom: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> RegionIn:
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError("region must have positive width and height")
+        return self
 
 
 class CreateJobRequest(BaseModel):
@@ -16,6 +29,15 @@ class CreateJobRequest(BaseModel):
     parent_image_id: str | None = None
     # Omit to start a new conversation; the title is derived from the prompt.
     session_id: str | None = None
+    # Edit only this rectangle of the parent, in parent-image pixels. The engine grows
+    # it to a size the model accepts and snaps it onto whitespace before sending.
+    region: RegionIn | None = None
+
+    @model_validator(mode="after")
+    def _region_needs_a_parent(self) -> CreateJobRequest:
+        if self.region is not None and not self.parent_image_id:
+            raise ValueError("region requires parent_image_id")
+        return self
 
 
 class UpdateSessionRequest(BaseModel):
@@ -43,7 +65,11 @@ class ImageOut(BaseModel):
     id: str
     job_id: str | None
     parent_id: str | None
+    # Archival original. Prefer viewer_url for display and gallery_url for thumbnails —
+    # the original can be 13 MB.
     url: str
+    viewer_url: str
+    gallery_url: str
     width: int
     height: int
     size_bytes: int
@@ -68,6 +94,7 @@ class JobOut(BaseModel):
     size: str
     n: int
     parent_image_id: str | None
+    region: RegionIn | None
     error: str | None
     dropped_parts: list[DroppedPartOut] = []
     input_tokens: int | None

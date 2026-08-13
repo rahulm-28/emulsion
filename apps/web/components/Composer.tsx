@@ -2,7 +2,8 @@
 
 import { ArrowUp, Copy, Layers, Square, X } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { ImageOut, ModelOut } from "@/lib/api";
+import type { ImageOut, ModelOut, Region } from "@/lib/api";
+import { RegionPicker } from "@/components/RegionPicker";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -38,6 +39,8 @@ interface Props {
   onCount: (value: number) => void;
   parent: ImageOut | null;
   onClearParent: () => void;
+  region: Region | null;
+  onRegion: (region: Region | null) => void;
   busy: boolean;
   onSubmit: () => void;
   onStop: () => void;
@@ -55,6 +58,8 @@ export function Composer({
   onCount,
   parent,
   onClearParent,
+  region,
+  onRegion,
   busy,
   onSubmit,
   onStop,
@@ -97,16 +102,19 @@ export function Composer({
         {parent && (
           <div className="mx-2 mb-[-10px] flex items-center gap-2.5 rounded-t-xl border border-b-0 border-border bg-background-subtle px-3 pb-4 pt-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={parent.url} alt="" className="size-8 rounded-md object-cover" />
+            <img src={parent.gallery_url} alt="" className="size-8 rounded-md object-cover" />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-1.5 text-[11px] font-medium text-accent">
                 <Layers className="size-3" />
                 Editing this image
               </p>
               <p className="truncate text-[11px] text-subtle-foreground">
-                {parent.prompt}
+                {region
+                  ? `Editing a ${region.right - region.left}×${region.bottom - region.top} area — everything else stays untouched`
+                  : parent.prompt}
               </p>
             </div>
+            <RegionPicker image={parent} value={region} onChange={onRegion} />
             <Tooltip label="Stop editing">
               <Button
                 variant="ghost"
@@ -144,7 +152,11 @@ export function Composer({
               }
             }}
             placeholder={
-              parent ? "Describe the change…" : "Describe the image you want…"
+              region
+                ? "Describe the change to this area…"
+                : parent
+                  ? "Describe the change…"
+                  : "Describe the image you want…"
             }
             className="block max-h-[320px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-subtle-foreground"
           />

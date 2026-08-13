@@ -25,6 +25,7 @@ from .derivatives import (
 from .gutters import (
     Rect,
     column_flatness,
+    expand_to_legal,
     flat_runs,
     gutter_fraction,
     row_flatness,
@@ -59,6 +60,7 @@ __all__ = [
     "composite",
     "context_drift",
     "estimate_shift",
+    "expand_to_legal",
     "feather_mask",
     "fit_gain_offset",
     "flat_runs",

@@ -7,11 +7,21 @@
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
+export interface Region {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 export interface ImageOut {
   id: string;
   job_id: string | null;
   parent_id: string | null;
+  /** Archival original — can be 13 MB. Prefer viewer_url / gallery_url for display. */
   url: string;
+  viewer_url: string;
+  gallery_url: string;
   width: number;
   height: number;
   size_bytes: number;
@@ -41,6 +51,7 @@ export interface JobOut {
   size: string;
   n: number;
   parent_image_id: string | null;
+  region: Region | null;
   error: string | null;
   dropped_parts: DroppedPart[];
   input_tokens: number | null;
@@ -150,6 +161,7 @@ export interface CreateJobBody {
   n: number;
   parent_image_id?: string | null;
   session_id?: string | null;
+  region?: Region | null;
 }
 
 export async function createJob(body: CreateJobBody): Promise<JobOut> {

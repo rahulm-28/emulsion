@@ -34,6 +34,7 @@ from .schemas import (
     JobEventOut,
     JobOut,
     ModelOut,
+    RegionIn,
     SessionOut,
     UpdateSessionRequest,
 )
@@ -107,6 +108,12 @@ def _image_out(image: Image) -> ImageOut:
         job_id=image.job_id,
         parent_id=image.parent_id,
         url=blob_store().signed_url(image.blob_key),
+        # Fall back to the archival key when a derivative is absent — images written
+        # before the pyramid existed still have to render.
+        viewer_url=blob_store().signed_url(image.viewer_key or image.blob_key),
+        gallery_url=blob_store().signed_url(
+            image.gallery_key or image.viewer_key or image.blob_key
+        ),
         width=image.width,
         height=image.height,
         size_bytes=image.size_bytes,
@@ -126,6 +133,7 @@ def _job_out(job: Job) -> JobOut:
         size=job.size,
         n=job.n,
         parent_image_id=job.parent_image_id,
+        region=_region_out(job.region),
         error=job.error,
         dropped_parts=[DroppedPartOut(**d) for d in json.loads(job.dropped_parts or "[]")],
         input_tokens=job.input_tokens,
@@ -151,10 +159,25 @@ def _session_out(session: DbSession) -> SessionOut:
         job_count=len(session.jobs),
         image_count=len(images),
         cost_usd=round(sum(job.cost_usd or 0.0 for job in session.jobs), 6),
-        thumbnail_url=blob_store().signed_url(images[-1].blob_key) if images else None,
+        thumbnail_url=(
+            # The gallery derivative — a sidebar of 13 MB PNGs is not a sidebar.
+            blob_store().signed_url(images[-1].gallery_key or images[-1].blob_key)
+            if images
+            else None
+        ),
         created_at=session.created_at,
         updated_at=session.updated_at,
     )
+
+
+def _region_out(raw: str | None) -> RegionIn | None:
+    if not raw:
+        return None
+    try:
+        left, top, right, bottom = (int(v) for v in raw.split(","))
+    except ValueError:
+        return None
+    return RegionIn(left=left, top=top, right=right, bottom=bottom)
 
 
 def _title_from(prompt: str, limit: int = 48) -> str:
@@ -236,6 +259,11 @@ def create_job(
     job = Job(
         idempotency_key=idempotency_key,
         session_id=chat.id,
+        region=(
+            f"{body.region.left},{body.region.top},{body.region.right},{body.region.bottom}"
+            if body.region
+            else None
+        ),
         status=JobStatus.QUEUED,
         model_id=body.model_id,
         prompt=body.prompt,

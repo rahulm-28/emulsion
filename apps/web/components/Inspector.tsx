@@ -79,7 +79,7 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
           <div className="overflow-hidden rounded-xl border border-border bg-card">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={image.url}
+              src={image.viewer_url}
               alt={image.prompt}
               className="w-full"
               style={{ aspectRatio: `${image.width} / ${image.height}` }}
@@ -170,7 +170,7 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={version.url}
+                      src={version.gallery_url}
                       alt=""
                       loading="lazy"
                       className="size-14 object-cover"

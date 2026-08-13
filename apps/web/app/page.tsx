@@ -23,6 +23,7 @@ import {
   type ImageOut,
   type JobOut,
   type ModelOut,
+  type Region,
   type SessionOut,
 } from "@/lib/api";
 
@@ -57,6 +58,7 @@ export default function Studio() {
   const [size, setSize] = useState("1k");
   const [count, setCount] = useState(1);
   const [parent, setParent] = useState<ImageOut | null>(null);
+  const [region, setRegion] = useState<Region | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,12 +138,14 @@ export default function Studio() {
         size,
         n: count,
         parent_image_id: parent?.id ?? null,
+        region: parent ? region : null,
         session_id: sessionId,
       });
 
       setSessionId(created.session_id);
       upsertJob(created);
       setParent(null);
+      setRegion(null);
       refreshSessions().catch(() => undefined);
 
       unsubscribe.current = streamJob(created.id, {
@@ -196,6 +200,7 @@ export default function Studio() {
     setJobs([]);
     setSelected(null);
     setParent(null);
+    setRegion(null);
     setError(null);
     setBusy(false);
     setNavOpen(false);
@@ -281,6 +286,7 @@ export default function Studio() {
               onEdit={(image) => {
                 setParent(image);
                 setSelected(image);
+                setRegion(null);
               }}
             />
           )}
@@ -307,7 +313,12 @@ export default function Studio() {
           count={count}
           onCount={setCount}
           parent={parent}
-          onClearParent={() => setParent(null)}
+          onClearParent={() => {
+            setParent(null);
+            setRegion(null);
+          }}
+          region={region}
+          onRegion={setRegion}
           busy={busy}
           onSubmit={submit}
           onStop={stopWatching}
@@ -322,7 +333,10 @@ export default function Studio() {
           open={inspectorOpen}
           onClose={() => setInspectorOpen(false)}
           onSelect={setSelected}
-          onEdit={(image) => setParent(image)}
+          onEdit={(image) => {
+            setParent(image);
+            setRegion(null);
+          }}
         />
       </div>
     </div>

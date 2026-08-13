@@ -131,6 +131,82 @@ def snap_to_gutters(
     ).clamp(width, height)
 
 
+def expand_to_legal(
+    rect: Rect,
+    image_width: int,
+    image_height: int,
+    *,
+    multiple_of: int = 16,
+    min_pixels: int = 655_360,
+    max_pixels: int = 8_294_400,
+    max_long_edge: int = 3840,
+    aspect: tuple[float, float] = (0.33, 3.0),
+) -> Rect | None:
+    """Grow `rect` until the provider will accept it as a standalone image.
+
+    Providers impose size rules on every call, and a crop is a call. The alternative —
+    resampling the crop up to a legal size and back down — throws away detail on the
+    way out and adds ringing on the way in, on exactly the fine text a diagram lives
+    or dies by. Growing the rect keeps every pixel native.
+
+    Returns None when the source image is simply too small to yield a legal crop; the
+    caller should fall back to a whole-image edit and say so. Limits are passed in
+    rather than imported so this package stays free of the provider layer.
+    """
+    if image_width <= 0 or image_height <= 0:
+        return None
+
+    def _round_up(value: int) -> int:
+        return ((value + multiple_of - 1) // multiple_of) * multiple_of
+
+    def _round_down(value: int) -> int:
+        return (value // multiple_of) * multiple_of
+
+    max_w = min(_round_down(image_width), max_long_edge)
+    max_h = min(_round_down(image_height), max_long_edge)
+    if max_w <= 0 or max_h <= 0 or max_w * max_h < min_pixels:
+        return None
+
+    width = min(max(_round_up(rect.width), multiple_of), max_w)
+    height = min(max(_round_up(rect.height), multiple_of), max_h)
+
+    # Grow the shorter side first: it keeps the crop closer to square, which is the
+    # cheapest way to satisfy both the pixel floor and the aspect band at once.
+    lo, hi = aspect
+    for _ in range(256):
+        ratio = width / height
+        if ratio > hi and height < max_h:
+            height = min(_round_up(height + multiple_of), max_h)
+            continue
+        if ratio < lo and width < max_w:
+            width = min(_round_up(width + multiple_of), max_w)
+            continue
+        if width * height < min_pixels:
+            if height <= width and height < max_h:
+                height = min(height + multiple_of, max_h)
+            elif width < max_w:
+                width = min(width + multiple_of, max_w)
+            else:
+                break
+            continue
+        break
+
+    if width * height < min_pixels or width * height > max_pixels:
+        return None
+    if not lo <= width / height <= hi:
+        return None
+
+    # Keep the requested region centred in the grown box, then slide it inside bounds.
+    centre_x = (rect.left + rect.right) // 2
+    centre_y = (rect.top + rect.bottom) // 2
+    left = centre_x - width // 2
+    top = centre_y - height // 2
+    left = max(0, min(left, image_width - width))
+    top = max(0, min(top, image_height - height))
+
+    return Rect(left, top, left + width, top + height)
+
+
 def gutter_fraction(image: np.ndarray, rect: Rect, threshold: float = DEFAULT_FLATNESS) -> float:
     """How much of the rect's border sits on flat pixels, 0..1.
 
