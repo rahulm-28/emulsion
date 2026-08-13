@@ -75,6 +75,7 @@ def store_image(
     image = Image(
         id=image_id,
         job_id=job.id,
+        owner_id=job.owner_id,
         parent_id=job.parent_image_id,
         blob_key=archival_key,
         viewer_key=keys.get("viewer"),

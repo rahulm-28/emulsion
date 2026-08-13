@@ -78,6 +78,7 @@ Generations cost real money — roughly **$0.53 per 4K image** at current token 
 | Variable | Default | Purpose |
 |---|---|---|
 | `EMULSION_ADAPTER` | `echo` | `echo` (offline, free) or `foundry` (real) |
+| `EMULSION_AUTH` | `dev` | `dev` is one implicit local user; `clerk` verifies real session JWTs |
 | `EMULSION_DATA_DIR` | `.data` | SQLite file and the local blob store |
 | `DATABASE_URL` | SQLite in `EMULSION_DATA_DIR` | Point at Postgres for the production shape |
 | `EMULSION_INLINE_WORKER` | `1` | `0` runs the worker as its own process, as production does |

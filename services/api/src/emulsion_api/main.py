@@ -16,12 +16,13 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from emulsion_db import HouseStyle as HouseStyleRow
-from emulsion_db import Image, Job, JobEvent, JobStatus, get_sessionmaker, utcnow
+from emulsion_db import Image, Job, JobEvent, JobStatus, User, get_sessionmaker, utcnow
 from emulsion_db import Session as DbSession
 from emulsion_engine import extract_recurring
+from emulsion_platform import AuthError, Principal, identity_provider
 from emulsion_providers import SIZE_PRESETS, available_models, load_manifest
 from emulsion_worker import blob_store, bootstrap, queue, run_forever, settings
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from . import quota
 from .schemas import (
     CreateJobRequest,
     DroppedPartOut,
@@ -63,6 +65,52 @@ def get_session() -> Session:
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+_identity = identity_provider()
+
+
+def current_user(
+    session: SessionDep,
+    authorization: Annotated[str | None, Header()] = None,
+    session_cookie: Annotated[str | None, Cookie(alias="__session")] = None,
+) -> User:
+    """Resolve the caller, creating their row on first sight.
+
+    Every list, read and write below filters on the row this returns. Ownership is
+    denormalised onto jobs and images so that filter is one indexed comparison rather
+    than a join back through the session — a scoping bug here shows another user their
+    pictures, so the query has to be impossible to get subtly wrong.
+    """
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    elif session_cookie:
+        # EventSource cannot set an Authorization header, so the SSE endpoint would be
+        # unauthenticatable on a header-only scheme. Clerk sets `__session` on the same
+        # origin, and Front Door makes the API same-origin in production, so the cookie
+        # is available exactly where the header is not.
+        token = session_cookie
+    try:
+        principal: Principal = _identity.authenticate(token)
+    except AuthError as exc:
+        raise HTTPException(401, "not authenticated") from exc
+
+    user = session.execute(
+        select(User).where(User.subject == principal.subject)
+    ).scalar_one_or_none()
+    if user is None:
+        user = User(
+            subject=principal.subject,
+            email=principal.email,
+            display_name=principal.display_name,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    return user
+
+
+UserDep = Annotated[User, Depends(current_user)]
 
 
 @contextlib.asynccontextmanager
@@ -240,6 +288,7 @@ def list_models() -> list[ModelOut]:
 def create_job(
     body: CreateJobRequest,
     session: SessionDep,
+    user: UserDep,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> JobOut:
     """Accept work and return immediately. The model is never called on this thread."""
@@ -254,15 +303,23 @@ def create_job(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    if body.parent_image_id and session.get(Image, body.parent_image_id) is None:
-        raise HTTPException(404, f"unknown parent image {body.parent_image_id!r}")
+    if body.parent_image_id:
+        parent = session.get(Image, body.parent_image_id)
+        if parent is None or parent.owner_id != user.id:
+            raise HTTPException(404, f"unknown parent image {body.parent_image_id!r}")
+
+    # ponytail: the quota check runs and currently always passes. It is here so M8 is a
+    # policy change rather than a hunt for every place a job is created.
+    decision = quota.check(user)
+    if not decision.allowed:
+        raise HTTPException(402, decision.reason)
 
     chat = session.get(DbSession, body.session_id) if body.session_id else None
-    if body.session_id and chat is None:
+    if body.session_id and (chat is None or chat.owner_id != user.id):
         raise HTTPException(404, f"unknown session {body.session_id!r}")
     if chat is None:
         # A first prompt creates its own conversation, so nothing has to exist first.
-        chat = DbSession(title=_title_from(body.prompt), model_id=body.model_id)
+        chat = DbSession(owner_id=user.id, title=_title_from(body.prompt), model_id=body.model_id)
         session.add(chat)
         session.flush()
     else:
@@ -271,13 +328,14 @@ def create_job(
 
     if idempotency_key:
         existing = session.execute(
-            select(Job).where(Job.idempotency_key == idempotency_key)
+            select(Job).where(Job.idempotency_key == idempotency_key, Job.owner_id == user.id)
         ).scalar_one_or_none()
         if existing is not None:
             return _job_out(existing)
 
     job = Job(
         idempotency_key=idempotency_key,
+        owner_id=user.id,
         session_id=chat.id,
         region=(
             f"{body.region.left},{body.region.top},{body.region.right},{body.region.bottom}"
@@ -300,7 +358,7 @@ def create_job(
         # creating a second one — a double charge on a paid tier otherwise.
         session.rollback()
         existing = session.execute(
-            select(Job).where(Job.idempotency_key == idempotency_key)
+            select(Job).where(Job.idempotency_key == idempotency_key, Job.owner_id == user.id)
         ).scalar_one_or_none()
         if existing is None:
             raise
@@ -312,9 +370,13 @@ def create_job(
 
 
 @app.get("/v1/styles", response_model=list[StyleOut])
-def list_styles(session: SessionDep) -> list[StyleOut]:
+def list_styles(session: SessionDep, user: UserDep) -> list[StyleOut]:
     rows = (
-        session.execute(select(HouseStyleRow).order_by(HouseStyleRow.updated_at.desc()))
+        session.execute(
+            select(HouseStyleRow)
+            .where(HouseStyleRow.owner_id == user.id)
+            .order_by(HouseStyleRow.updated_at.desc())
+        )
         .scalars()
         .all()
     )
@@ -322,8 +384,9 @@ def list_styles(session: SessionDep) -> list[StyleOut]:
 
 
 @app.post("/v1/styles", response_model=StyleOut, status_code=201)
-def create_style(body: StyleIn, session: SessionDep) -> StyleOut:
+def create_style(body: StyleIn, session: SessionDep, user: UserDep) -> StyleOut:
     row = HouseStyleRow(
+        owner_id=user.id,
         name=body.name,
         legend_json=json.dumps(body.legend),
         rules_json=json.dumps(body.rules),
@@ -337,9 +400,9 @@ def create_style(body: StyleIn, session: SessionDep) -> StyleOut:
 
 
 @app.patch("/v1/styles/{style_id}", response_model=StyleOut)
-def update_style(style_id: str, body: StyleIn, session: SessionDep) -> StyleOut:
+def update_style(style_id: str, body: StyleIn, session: SessionDep, user: UserDep) -> StyleOut:
     row = session.get(HouseStyleRow, style_id)
-    if row is None:
+    if row is None or row.owner_id != user.id:
         raise HTTPException(404, "style not found")
     row.name = body.name
     row.legend_json = json.dumps(body.legend)
@@ -353,9 +416,9 @@ def update_style(style_id: str, body: StyleIn, session: SessionDep) -> StyleOut:
 
 
 @app.delete("/v1/styles/{style_id}", status_code=204)
-def delete_style(style_id: str, session: SessionDep) -> None:
+def delete_style(style_id: str, session: SessionDep, user: UserDep) -> None:
     row = session.get(HouseStyleRow, style_id)
-    if row is None:
+    if row is None or row.owner_id != user.id:
         raise HTTPException(404, "style not found")
     # Sessions referencing it fall back to no style rather than cascading away.
     session.delete(row)
@@ -365,6 +428,7 @@ def delete_style(style_id: str, session: SessionDep) -> None:
 @app.get("/v1/styles/suggestions", response_model=list[SuggestionOut])
 def style_suggestions(
     session: SessionDep,
+    user: UserDep,
     min_occurrences: Annotated[int, Query(ge=2, le=20)] = 3,
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
 ) -> list[SuggestionOut]:
@@ -375,7 +439,12 @@ def style_suggestions(
     picture for reasons nobody can debug.
     """
     prompts = (
-        session.execute(select(Job.prompt).order_by(Job.created_at.desc()).limit(400))
+        session.execute(
+            select(Job.prompt)
+            .where(Job.owner_id == user.id)
+            .order_by(Job.created_at.desc())
+            .limit(400)
+        )
         .scalars()
         .all()
     )
@@ -388,11 +457,12 @@ def style_suggestions(
 
 @app.get("/v1/sessions", response_model=list[SessionOut])
 def list_sessions(
-    session: SessionDep, limit: Annotated[int, Query(ge=1, le=200)] = 100
+    session: SessionDep, user: UserDep, limit: Annotated[int, Query(ge=1, le=200)] = 100
 ) -> list[SessionOut]:
     chats = (
         session.execute(
             select(DbSession)
+            .where(DbSession.owner_id == user.id)
             .options(selectinload(DbSession.jobs).selectinload(Job.images))
             .order_by(DbSession.updated_at.desc())
             .limit(limit)
@@ -404,22 +474,25 @@ def list_sessions(
 
 
 @app.get("/v1/sessions/{session_id}/jobs", response_model=list[JobOut])
-def session_jobs(session_id: str, session: SessionDep) -> list[JobOut]:
+def session_jobs(session_id: str, session: SessionDep, user: UserDep) -> list[JobOut]:
     chat = session.get(DbSession, session_id)
-    if chat is None:
+    if chat is None or chat.owner_id != user.id:
         raise HTTPException(404, "session not found")
     return [_job_out(job) for job in chat.jobs]
 
 
 @app.patch("/v1/sessions/{session_id}", response_model=SessionOut)
-def rename_session(session_id: str, body: UpdateSessionRequest, session: SessionDep) -> SessionOut:
+def rename_session(
+    session_id: str, body: UpdateSessionRequest, session: SessionDep, user: UserDep
+) -> SessionOut:
     chat = session.get(DbSession, session_id)
-    if chat is None:
+    if chat is None or chat.owner_id != user.id:
         raise HTTPException(404, "session not found")
     if body.title is not None:
         chat.title = body.title
     if body.style_id is not None:
-        if body.style_id and session.get(HouseStyleRow, body.style_id) is None:
+        style_row = session.get(HouseStyleRow, body.style_id) if body.style_id else None
+        if body.style_id and (style_row is None or style_row.owner_id != user.id):
             raise HTTPException(404, f"unknown style {body.style_id!r}")
         chat.style_id = body.style_id or None
     if body.link_consistency is not None:
@@ -430,9 +503,9 @@ def rename_session(session_id: str, body: UpdateSessionRequest, session: Session
 
 
 @app.delete("/v1/sessions/{session_id}", status_code=204)
-def delete_session(session_id: str, session: SessionDep) -> None:
+def delete_session(session_id: str, session: SessionDep, user: UserDep) -> None:
     chat = session.get(DbSession, session_id)
-    if chat is None:
+    if chat is None or chat.owner_id != user.id:
         raise HTTPException(404, "session not found")
     # ponytail: rows go, blobs stay. Orphaned blobs need a sweeper (or a lifecycle rule
     # on the container) before this ships — deleting bytes on a cascade is how you lose
@@ -442,10 +515,13 @@ def delete_session(session_id: str, session: SessionDep) -> None:
 
 
 @app.get("/v1/jobs", response_model=list[JobOut])
-def list_jobs(session: SessionDep, limit: Annotated[int, Query(ge=1, le=200)] = 50) -> list[JobOut]:
+def list_jobs(
+    session: SessionDep, user: UserDep, limit: Annotated[int, Query(ge=1, le=200)] = 50
+) -> list[JobOut]:
     jobs = (
         session.execute(
             select(Job)
+            .where(Job.owner_id == user.id)
             .options(selectinload(Job.images), selectinload(Job.events))
             .order_by(Job.created_at.desc())
             .limit(limit)
@@ -457,15 +533,15 @@ def list_jobs(session: SessionDep, limit: Annotated[int, Query(ge=1, le=200)] = 
 
 
 @app.get("/v1/jobs/{job_id}", response_model=JobOut)
-def get_job(job_id: str, session: SessionDep) -> JobOut:
+def get_job(job_id: str, session: SessionDep, user: UserDep) -> JobOut:
     job = session.get(Job, job_id)
-    if job is None:
+    if job is None or job.owner_id != user.id:
         raise HTTPException(404, "job not found")
     return _job_out(job)
 
 
 @app.get("/v1/jobs/{job_id}/events")
-async def stream_events(job_id: str) -> StreamingResponse:
+async def stream_events(job_id: str, session: SessionDep, user: UserDep) -> StreamingResponse:
     """SSE tail of `job_events`, closing once the job reaches a terminal state.
 
     Polling the table rather than holding a subscription is deliberate: it survives an
@@ -478,6 +554,12 @@ async def stream_events(job_id: str) -> StreamingResponse:
     its own, so an idle stream ending is not an error.
     """
 
+    # Checked once, before streaming: the terminal frame carries the whole job,
+    # including image URLs, so an unscoped stream is a data leak with extra steps.
+    owned = session.get(Job, job_id)
+    if owned is None or owned.owner_id != user.id:
+        raise HTTPException(404, "job not found")
+
     async def event_stream() -> AsyncIterator[str]:
         last_seq = -1
         deadline = asyncio.get_running_loop().time() + STREAM_MAX_SECONDS
@@ -487,7 +569,7 @@ async def stream_events(job_id: str) -> StreamingResponse:
             session = get_sessionmaker()()
             try:
                 job = session.get(Job, job_id)
-                if job is None:
+                if job is None or job.owner_id != user.id:
                     yield _sse("error", {"message": "job not found"})
                     return
                 events = (
@@ -526,10 +608,15 @@ async def stream_events(job_id: str) -> StreamingResponse:
 
 @app.get("/v1/images", response_model=list[ImageOut])
 def list_images(
-    session: SessionDep, limit: Annotated[int, Query(ge=1, le=200)] = 100
+    session: SessionDep, user: UserDep, limit: Annotated[int, Query(ge=1, le=200)] = 100
 ) -> list[ImageOut]:
     images = (
-        session.execute(select(Image).order_by(Image.created_at.desc()).limit(limit))
+        session.execute(
+            select(Image)
+            .where(Image.owner_id == user.id)
+            .order_by(Image.created_at.desc())
+            .limit(limit)
+        )
         .scalars()
         .all()
     )
@@ -537,34 +624,36 @@ def list_images(
 
 
 @app.get("/v1/images/{image_id}", response_model=ImageOut)
-def get_image(image_id: str, session: SessionDep) -> ImageOut:
+def get_image(image_id: str, session: SessionDep, user: UserDep) -> ImageOut:
     image = session.get(Image, image_id)
-    if image is None:
+    if image is None or image.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return _image_out(image)
 
 
 @app.get("/v1/images/{image_id}/content")
-def image_content(image_id: str, session: SessionDep) -> RedirectResponse:
+def image_content(image_id: str, session: SessionDep, user: UserDep) -> RedirectResponse:
     """Redirect to the blob URL. The API never streams the bytes itself (invariant 4)."""
     image = session.get(Image, image_id)
-    if image is None:
+    if image is None or image.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return RedirectResponse(blob_store().signed_url(image.blob_key), status_code=307)
 
 
 @app.get("/v1/images/{image_id}/lineage", response_model=list[ImageOut])
-def image_lineage(image_id: str, session: SessionDep) -> list[ImageOut]:
+def image_lineage(image_id: str, session: SessionDep, user: UserDep) -> list[ImageOut]:
     """Walk parent links to the root. Oldest first."""
     chain: list[Image] = []
     seen: set[str] = set()
     current = session.get(Image, image_id)
-    if current is None:
+    if current is None or current.owner_id != user.id:
         raise HTTPException(404, "image not found")
     while current is not None and current.id not in seen:
         seen.add(current.id)
         chain.append(current)
-        current = session.get(Image, current.parent_id) if current.parent_id else None
+        parent = session.get(Image, current.parent_id) if current.parent_id else None
+        # Never cross an ownership boundary while walking lineage.
+        current = parent if parent is not None and parent.owner_id == user.id else None
     return [_image_out(i) for i in reversed(chain)]
 
 

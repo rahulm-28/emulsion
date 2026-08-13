@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -43,6 +44,25 @@ class JobStatus:
     TERMINAL = frozenset({SUCCEEDED, FAILED})
 
 
+class User(Base):
+    """One account. `subject` is whatever the identity provider calls this person."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    subject: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), default="")
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+
+    # ponytail: billing stub. Every account is on `free` and no quota is enforced —
+    # `plan` and `monthly_cost_cap_usd` exist so M8 is a metering implementation rather
+    # than a migration. See `quota.py` for the check that currently always passes.
+    plan: Mapped[str] = mapped_column(String(32), default="free")
+    monthly_cost_cap_usd: Mapped[float | None] = mapped_column(Float)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class HouseStyle(Base):
     """A named, reusable set of diagram defaults.
 
@@ -54,6 +74,7 @@ class HouseStyle(Base):
     __tablename__ = "house_styles"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     legend_json: Mapped[str] = mapped_column(Text, default="{}")
     rules_json: Mapped[str] = mapped_column(Text, default="[]")
@@ -71,6 +92,7 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(200), default="Untitled")
     model_id: Mapped[str] = mapped_column(String(64), default="gpt-image-2")
     style_id: Mapped[str | None] = mapped_column(ForeignKey("house_styles.id", ondelete="SET NULL"))
@@ -93,15 +115,21 @@ class Job(Base):
     """One unit of model work. Created by the API, executed by the worker."""
 
     __tablename__ = "jobs"
+    __table_args__ = (
+        # Scoped per owner: two users choosing the same key is a coincidence, not a
+        # conflict, and a global unique index hands a 500 to whoever submits second.
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_jobs_owner_idempotency"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     session_id: Mapped[str | None] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"), index=True
     )
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
 
     # Invariant 8. A double-submitted retry on a paid tier is a double charge, so the
     # uniqueness is enforced by the database rather than by a check-then-insert race.
-    idempotency_key: Mapped[str | None] = mapped_column(String(200), unique=True, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), index=True)
 
     status: Mapped[str] = mapped_column(String(16), default=JobStatus.QUEUED, index=True)
     kind: Mapped[str] = mapped_column(String(16), default="generate")
@@ -168,6 +196,7 @@ class Image(Base):
     job_id: Mapped[str | None] = mapped_column(
         ForeignKey("jobs.id", ondelete="CASCADE"), index=True
     )
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"))
 
     blob_key: Mapped[str] = mapped_column(String(300))

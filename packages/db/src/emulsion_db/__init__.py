@@ -9,6 +9,7 @@ from .models import (
     JobStatus,
     QueueMessage,
     Session,
+    User,
     new_id,
     utcnow,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "JobStatus",
     "QueueMessage",
     "Session",
+    "User",
     "create_all",
     "database_url",
     "get_engine",
