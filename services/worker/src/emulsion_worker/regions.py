@@ -26,6 +26,7 @@ from emulsion_imaging import (
     choose_best,
     expand_to_legal,
     plan_region_edit,
+    snap_to_gutters,
     to_array,
     to_png,
 )
@@ -72,40 +73,34 @@ def prepare(parent_png: bytes, rect: Rect, manifest: Manifest, *, padding: int =
     """
     parent = to_array(parent_png)
     height, width = parent.shape[:2]
-
     pixels = manifest.pixels
-    legal = expand_to_legal(
-        rect,
-        width,
-        height,
-        multiple_of=pixels.multiple_of,
-        min_pixels=pixels.min,
-        max_pixels=pixels.max,
-        max_long_edge=pixels.long_edge,
-        aspect=pixels.aspect,
-    )
+
+    def legalise(candidate: Rect) -> Rect | None:
+        return expand_to_legal(
+            candidate,
+            width,
+            height,
+            multiple_of=pixels.multiple_of,
+            min_pixels=pixels.min,
+            max_pixels=pixels.max,
+            max_long_edge=pixels.long_edge,
+            aspect=pixels.aspect,
+        )
+
+    # Order matters, and getting it wrong is silent: snapping moves edges by a few
+    # pixels, which knocks the size off the multiple-of-16 grid. So snap first, let the
+    # gutters inform the rect, then legalise once — and build the final plan with
+    # snapping disabled so nothing moves after the size is settled.
+    padded = rect.pad(padding, width, height)
+    snapped = snap_to_gutters(parent, padded)
+    legal = legalise(snapped) or legalise(padded)
     if legal is None:
         raise RegionTooSmall(
             f"a {width}x{height} image cannot yield a crop {manifest.id} accepts "
             f"(needs at least {pixels.min:,} pixels); edit the whole image instead"
         )
 
-    plan = plan_region_edit(parent, legal, padding=padding)
-
-    # Snapping and padding move the edges, which can break the size rules again.
-    # Re-legalise, and take the plan for whichever rect survives.
-    relegalised = expand_to_legal(
-        plan.rect,
-        width,
-        height,
-        multiple_of=pixels.multiple_of,
-        min_pixels=pixels.min,
-        max_pixels=pixels.max,
-        max_long_edge=pixels.long_edge,
-        aspect=pixels.aspect,
-    )
-    if relegalised is not None and relegalised.as_tuple() != plan.rect.as_tuple():
-        plan = plan_region_edit(parent, relegalised, padding=0)
+    plan = plan_region_edit(parent, legal, padding=0, snap_tolerance=0)
 
     request = RegionRequest(
         crop_png=to_png(plan.crop),
@@ -113,7 +108,7 @@ def prepare(parent_png: bytes, rect: Rect, manifest: Manifest, *, padding: int =
         width=plan.rect.width,
         height=plan.rect.height,
         gutter_fraction=plan.gutter_fraction,
-        snapped=plan.snapped,
+        snapped=snapped.as_tuple() != padded.as_tuple(),
         grew=plan.rect.as_tuple() != rect.as_tuple(),
     )
     return request, parent, plan

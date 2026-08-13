@@ -105,7 +105,8 @@ make web    # in a third
 | `packages/db` | Jobs, events, images with lineage, queue table |
 | `packages/providers` | Manifests, sizing, cost, throttle, `echo` + `foundry` adapters |
 | `packages/engine` | **Prompt compiler** — structured diagram spec, constraint packs, spec validation |
-| `packages/imaging` | Gutter snapping, alignment, colour matching, seam scoring, composite, derivative pyramid |
+| `packages/imaging` | Gutter snapping, alignment, colour matching, seam scoring, composite, derivatives, export |
+| identity | `dev` (single local user) or Clerk, behind M0's `IdentityProvider` seam |
 | `services/api` | FastAPI: create job, list, SSE progress, library, lineage |
 | `services/worker` | Queue consumer, inline or standalone |
 | `apps/web` | Next.js studio — conversations, model picker, live pipeline, inspector, lineage |
@@ -131,6 +132,9 @@ Dropdown, Tooltip, Dialog) — no native form controls.
   picture, so a set reads as a deck
 - **Learned constraints** — clauses you keep typing are surfaced with the prompts that
   produced them, and only apply once you add them to a style
+- **Export** as PNG / WebP / JPEG, at 0.5–2×, with the background knocked out for
+  slides — and it refuses rather than guessing when the image has no flat background
+- **Rerun** any generation with the same parameters and a fresh sample
 - **Draw an area to edit just that part** — the region is grown to a size the model
   accepts and snapped onto whitespace, and everything outside it stays byte-identical
 

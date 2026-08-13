@@ -248,6 +248,36 @@ export async function createJob(body: CreateJobBody): Promise<JobOut> {
   );
 }
 
+export interface ExportRequest {
+  format: "png" | "webp" | "jpeg";
+  transparent?: boolean;
+  scale?: number;
+  quality?: number;
+}
+
+export interface ExportOut {
+  url: string;
+  width: number;
+  height: number;
+  content_type: string;
+  has_alpha: boolean;
+  background_uniform: boolean;
+  size_bytes: number;
+}
+
+export async function exportImage(
+  imageId: string,
+  body: ExportRequest,
+): Promise<ExportOut> {
+  return json(
+    await fetch(`/v1/images/${imageId}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
 export interface JobStreamHandlers {
   onMessage?: (kind: string, message: string) => void;
   onDone?: (job: JobOut) => void;

@@ -30,16 +30,39 @@ def _chunk(tag: bytes, data: bytes) -> bytes:
     )
 
 
-def gradient_png(width: int, height: int, base: tuple[int, int, int]) -> bytes:
-    """A vertical gradient as a valid PNG, using only the standard library."""
-    r0, g0, b0 = base
+def diagram_png(width: int, height: int, seed: str) -> bytes:
+    """A flat pseudo-diagram: coloured zones on an off-white ground, with gutters.
+
+    Deliberately not a gradient. Echo stands in for a model that produces flat technical
+    diagrams, and the rest of the system leans on that shape — gutter snapping finds the
+    whitespace between zones, and transparency needs a single background colour. A
+    gradient stand-in makes both look broken locally while the real model would be fine.
+    """
+    background = (245, 245, 247)
+    digest = hashlib.sha256(seed.encode("utf-8")).digest()
+
+    margin_x, margin_y = width // 12, height // 12
+    gutter_x, gutter_y = width // 14, height // 14
+    cell_w = (width - 2 * margin_x - gutter_x) // 2
+    cell_h = (height - 2 * margin_y - gutter_y) // 2
+
+    boxes: list[tuple[int, int, int, int, tuple[int, int, int]]] = []
+    for index in range(4):
+        col, row = index % 2, index // 2
+        x0 = margin_x + col * (cell_w + gutter_x)
+        y0 = margin_y + row * (cell_h + gutter_y)
+        colour = tuple(70 + (digest[index * 3 + channel] % 150) for channel in range(3))
+        boxes.append((x0, y0, x0 + cell_w, y0 + cell_h, colour))  # type: ignore[arg-type]
+
+    blank_row = bytes(background) * width
     raw = bytearray()
     for y in range(height):
-        t = y / max(1, height - 1)
-        scale = 1.0 - 0.55 * t
-        pixel = bytes((int(r0 * scale), int(g0 * scale), int(b0 * scale)))
+        row = bytearray(blank_row)
+        for x0, y0, x1, y1, colour in boxes:
+            if y0 <= y < y1:
+                row[x0 * 3 : x1 * 3] = bytes(colour) * (x1 - x0)
         raw.append(0)  # filter type 0 (None) for this scanline
-        raw += pixel * width
+        raw += row
 
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     return (
@@ -48,12 +71,6 @@ def gradient_png(width: int, height: int, base: tuple[int, int, int]) -> bytes:
         + _chunk(b"IDAT", zlib.compress(bytes(raw), 6))
         + _chunk(b"IEND", b"")
     )
-
-
-def _colour_for(seed: str) -> tuple[int, int, int]:
-    digest = hashlib.sha256(seed.encode("utf-8")).digest()
-    # Bias upward so the result is a legible colour rather than near-black.
-    return tuple(90 + (b % 140) for b in digest[:3])  # type: ignore[return-value]
 
 
 class EchoAdapter:
@@ -82,7 +99,7 @@ class EchoAdapter:
                 on_progress(f"rendering candidate {index + 1} of {params.n}")
             # Stand in for real generation latency so progress streaming is observable.
             time.sleep(self.latency_s)
-            data = gradient_png(params.width, params.height, _colour_for(f"{prompt}:{index}"))
+            data = diagram_png(params.width, params.height, f"{prompt}:{index}")
             images.append(
                 GeneratedImage(
                     data=data,

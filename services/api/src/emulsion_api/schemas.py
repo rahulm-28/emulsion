@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -60,6 +61,24 @@ class SuggestionOut(BaseModel):
     text: str
     occurrences: int
     examples: list[str]
+
+
+class ExportRequest(BaseModel):
+    format: Literal["png", "webp", "jpeg"] = "png"
+    transparent: bool = False
+    scale: float = Field(default=1.0, ge=0.25, le=4.0)
+    quality: int = Field(default=90, ge=40, le=100)
+
+
+class ExportOut(BaseModel):
+    url: str
+    # False when the source had no uniform background, so transparency was skipped.
+    background_uniform: bool = True
+    width: int
+    height: int
+    content_type: str
+    has_alpha: bool
+    size_bytes: int
 
 
 class UpdateSessionRequest(BaseModel):

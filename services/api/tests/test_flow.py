@@ -456,3 +456,61 @@ def test_suggestions_surface_a_repeated_clause(client):
     entry = next(s for s in found if s["text"] == "no gridlines")
     assert entry["occurrences"] >= 3
     assert entry["examples"]  # evidence travels with the suggestion
+
+
+# -- export ---------------------------------------------------------------------------
+
+
+def test_export_converts_format(client):
+    job = submit(client, prompt="export me", size="1k")
+    image = drain(client, job["id"])["images"][0]
+
+    response = client.post(f"/v1/images/{image['id']}/export", json={"format": "webp"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["content_type"] == "image/webp"
+    assert client.get(body["url"]).status_code == 200
+
+
+def test_export_can_add_transparency(client):
+    job = submit(client, prompt="knock out the background", size="1k")
+    image = drain(client, job["id"])["images"][0]
+
+    body = client.post(
+        f"/v1/images/{image['id']}/export",
+        json={"format": "png", "transparent": True},
+    ).json()
+    assert body["has_alpha"] is True
+
+
+def test_export_can_scale(client):
+    job = submit(client, prompt="bigger please", size="1k")
+    image = drain(client, job["id"])["images"][0]
+
+    body = client.post(
+        f"/v1/images/{image['id']}/export", json={"format": "png", "scale": 2.0}
+    ).json()
+    assert (body["width"], body["height"]) == (image["width"] * 2, image["height"] * 2)
+
+
+def test_export_rejects_an_absurd_scale(client):
+    job = submit(client, prompt="x", size="1k")
+    image = drain(client, job["id"])["images"][0]
+    response = client.post(f"/v1/images/{image['id']}/export", json={"format": "png", "scale": 99})
+    assert response.status_code == 422
+
+
+def test_export_of_a_missing_image_is_404(client):
+    assert client.post("/v1/images/nope/export", json={"format": "png"}).status_code == 404
+
+
+def test_export_reports_whether_transparency_applied(client):
+    """Echo renders a flat pseudo-diagram, so the guard passes and alpha is real."""
+    job = submit(client, prompt="flat diagram", size="1k")
+    image = drain(client, job["id"])["images"][0]
+    body = client.post(
+        f"/v1/images/{image['id']}/export",
+        json={"format": "png", "transparent": True},
+    ).json()
+    assert body["background_uniform"] is True
+    assert body["has_alpha"] is True

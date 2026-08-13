@@ -19,6 +19,7 @@ from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, User, get_sessionmaker, utcnow
 from emulsion_db import Session as DbSession
 from emulsion_engine import extract_recurring
+from emulsion_imaging import export as imaging_export
 from emulsion_platform import AuthError, Principal, identity_provider
 from emulsion_providers import SIZE_PRESETS, available_models, load_manifest
 from emulsion_worker import blob_store, bootstrap, queue, run_forever, settings
@@ -34,6 +35,8 @@ from . import quota
 from .schemas import (
     CreateJobRequest,
     DroppedPartOut,
+    ExportOut,
+    ExportRequest,
     ImageOut,
     JobEventOut,
     JobOut,
@@ -638,6 +641,53 @@ def image_content(image_id: str, session: SessionDep, user: UserDep) -> Redirect
     if image is None or image.owner_id != user.id:
         raise HTTPException(404, "image not found")
     return RedirectResponse(blob_store().signed_url(image.blob_key), status_code=307)
+
+
+@app.post("/v1/images/{image_id}/export", response_model=ExportOut)
+def export_image(
+    image_id: str, body: ExportRequest, session: SessionDep, user: UserDep
+) -> ExportOut:
+    """Post-process an image and hand back a URL to the result.
+
+    ponytail: synchronous. Invariant 1 forbids a synchronous endpoint that calls a
+    *model*; this calls numpy, and a 4K transparency pass plus re-encode is a second or
+    two. If that stops being true — a real super-resolution model, say — this becomes a
+    job like everything else, and the route keeps its shape by returning a job id.
+    """
+    image = session.get(Image, image_id)
+    if image is None or image.owner_id != user.id:
+        raise HTTPException(404, "image not found")
+
+    try:
+        result = imaging_export(
+            blob_store().get(image.blob_key),
+            fmt=body.format,
+            transparent=body.transparent,
+            scale=body.scale,
+            quality=body.quality,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    # The key encodes the options, so re-exporting the same settings overwrites rather
+    # than accumulating a new blob per click.
+    parts = [body.format]
+    if result.has_alpha:
+        parts.append("alpha")
+    if body.scale != 1:
+        parts.append(f"{body.scale:g}x")
+    key = f"exports/{image_id}.{'-'.join(parts)}.{body.format}"
+    blob_store().put(key, result.data, result.content_type)
+
+    return ExportOut(
+        url=blob_store().signed_url(key),
+        width=result.width,
+        height=result.height,
+        content_type=result.content_type,
+        has_alpha=result.has_alpha,
+        background_uniform=result.background_uniform,
+        size_bytes=len(result.data),
+    )
 
 
 @app.get("/v1/images/{image_id}/lineage", response_model=list[ImageOut])

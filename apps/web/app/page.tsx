@@ -131,19 +131,22 @@ export default function Studio() {
 
   async function submit() {
     if (!prompt.trim() || busy) return;
+    setPrompt("");
+    await submitText(prompt.trim(), size, count);
+  }
+
+  async function submitText(text: string, useSize: string, useCount: number) {
+    if (!text.trim() || busy) return;
     unsubscribe.current?.();
     setBusy(true);
     setError(null);
-
-    const text = prompt.trim();
-    setPrompt("");
 
     try {
       const created = await createJob({
         prompt: text,
         model_id: modelId,
-        size,
-        n: count,
+        size: useSize,
+        n: useCount,
         parent_image_id: parent?.id ?? null,
         region: parent ? region : null,
         session_id: sessionId,
@@ -151,6 +154,7 @@ export default function Studio() {
 
       setSessionId(created.session_id);
       upsertJob(created);
+      setPrompt("");
       setParent(null);
       setRegion(null);
       if (!sessionId && created.session_id && (pendingStyleId || pendingLink)) {
@@ -205,6 +209,21 @@ export default function Studio() {
     if (running) {
       getJob(running.id).then(upsertJob).catch(() => undefined);
     }
+  }
+
+  /**
+   * Run the same prompt again. Same session, same parameters, new idempotency key —
+   * the point of a rerun is a different sample, so reusing the key would return the
+   * original job and look like nothing happened.
+   */
+  function rerun(job: JobOut) {
+    if (busy) return;
+    setPrompt(job.prompt);
+    setSize(job.size);
+    setCount(job.n);
+    setParent(null);
+    setRegion(null);
+    window.setTimeout(() => submitText(job.prompt, job.size, job.n), 0);
   }
 
   function startNew() {
@@ -315,6 +334,7 @@ export default function Studio() {
                 setSelected(image);
                 setRegion(null);
               }}
+              onRerun={rerun}
             />
           )}
           <div ref={bottom} />

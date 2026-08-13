@@ -6,6 +6,7 @@ import {
   Loader2,
   Maximize2,
   Pencil,
+  RotateCw,
   Sparkles,
 } from "lucide-react";
 import type { ImageOut, JobOut } from "@/lib/api";
@@ -162,9 +163,10 @@ interface Props {
   selectedImageId: string | null;
   onSelectImage: (image: ImageOut) => void;
   onEdit: (image: ImageOut) => void;
+  onRerun: (job: JobOut) => void;
 }
 
-export function Thread({ jobs, selectedImageId, onSelectImage, onEdit }: Props) {
+export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun }: Props) {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-9 px-4 py-8">
       {jobs.map((job) => (
@@ -286,6 +288,14 @@ export function Thread({ jobs, selectedImageId, onSelectImage, onEdit }: Props) 
                   <span>{formatCost(job.cost_usd)}</span>
                   <span aria-hidden>·</span>
                   <span>{formatDuration(job.started_at, job.finished_at)}</span>
+                  <button
+                    type="button"
+                    onClick={() => onRerun(job)}
+                    className="-my-2 inline-flex cursor-pointer items-center gap-1 py-2 text-accent underline-offset-2 transition-colors duration-200 hover:underline"
+                  >
+                    <RotateCw className="size-3" />
+                    rerun
+                  </button>
                 </div>
               )}
             </div>

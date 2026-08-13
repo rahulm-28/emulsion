@@ -77,6 +77,9 @@ export function RegionPicker({ image, value, onChange }: Props) {
           Drag to choose the area to edit
         </DialogTitle>
 
+        {/* The surface is capped so the confirm button never leaves the viewport. A
+            square 4K image at dialog width is taller than the screen otherwise, and the
+            action ends up below the fold where nobody finds it. */}
         <div
           ref={surface}
           onPointerDown={(event) => {
@@ -89,14 +92,14 @@ export function RegionPicker({ image, value, onChange }: Props) {
             const { x, y } = point(event);
             setDrag({ ...drag, x1: x, y1: y });
           }}
-          className="relative cursor-crosshair select-none overflow-hidden rounded-xl border border-border"
+          className="relative mx-auto w-fit max-w-full cursor-crosshair select-none overflow-hidden rounded-xl border border-border"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={image.viewer_url}
             alt={image.prompt}
             draggable={false}
-            className="w-full select-none"
+            className="max-h-[58vh] w-auto max-w-full select-none object-contain"
             style={{ aspectRatio: `${image.width} / ${image.height}` }}
           />
 

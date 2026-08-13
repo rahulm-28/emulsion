@@ -167,3 +167,10 @@ def test_an_idempotency_key_does_not_cross_users(two_users):
     assert second.status_code == 202
     assert second.json()["id"] != first["id"]
     assert second.json()["prompt"] == "bob"
+
+
+def test_another_users_image_cannot_be_exported(two_users):
+    client, alice, bob = two_users
+    image = make_job(client, alice)["images"][0]
+    response = client.post(f"/v1/images/{image['id']}/export", json={"format": "png"}, headers=bob)
+    assert response.status_code == 404

@@ -1,10 +1,11 @@
 "use client";
 
-import { Download, Layers, Pencil, X } from "lucide-react";
+import { Layers, Pencil, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getLineage, type ImageOut, type JobOut, type ModelOut } from "@/lib/api";
 import { formatBytes, formatCost, formatDuration } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { ExportPanel } from "@/components/ExportPanel";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -86,18 +87,14 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
             />
           </div>
 
-          <div className="flex gap-2">
-            <Button asChild variant="secondary" className="flex-1">
-              <a href={image.url} download>
-                <Download />
-                Download
-              </a>
-            </Button>
-            <Button variant="secondary" className="flex-1" onClick={() => onEdit(image)}>
-              <Pencil />
-              Edit
-            </Button>
-          </div>
+          <Button variant="secondary" className="w-full" onClick={() => onEdit(image)}>
+            <Pencil />
+            Edit this image
+          </Button>
+
+          <Section title="Export">
+            <ExportPanel image={image} />
+          </Section>
 
           <Section title="Output">
             <dl>
