@@ -88,6 +88,22 @@ class FoundryAdapter:
         self._client = client or httpx.Client(timeout=REQUEST_TIMEOUT_S)
         self._bucket = TokenBucket(self.manifest.rate_limit)
 
+    def _scrub(self, text: str) -> str:
+        """Remove the credential and the host from anything user-facing.
+
+        Invariant 6: a BYOK key is never returned, never logged, never in an error
+        message. The provider will happily echo a bad key back in its own error text,
+        so redacting at the boundary is the only place that actually holds — a caller
+        who forgets is a key in a log aggregator.
+        """
+        cleaned = redact_host(text)
+        if self._api_key:
+            cleaned = cleaned.replace(self._api_key, "<redacted>")
+            # Also catch the common "first/last few characters" echo.
+            if len(self._api_key) > 8:
+                cleaned = cleaned.replace(self._api_key[:8], "<redacted>")
+        return cleaned
+
     # -- headers ---------------------------------------------------------------
 
     def _auth_headers(self) -> dict[str, str]:
@@ -198,7 +214,7 @@ class FoundryAdapter:
             except httpx.TimeoutException as exc:
                 raise ProviderError(f"provider timed out after {REQUEST_TIMEOUT_S:.0f}s") from exc
             except httpx.HTTPError as exc:
-                raise ProviderError(f"network error: {redact_host(str(exc))}") from exc
+                raise ProviderError(f"network error: {self._scrub(str(exc))}") from exc
 
             if response.status_code == 200:
                 return response.json()
@@ -211,7 +227,7 @@ class FoundryAdapter:
             if delay is None:
                 raise ProviderError(
                     f"provider returned {response.status_code}: "
-                    f"{redact_host(_error_text(response))}",
+                    f"{self._scrub(_error_text(response))}",
                     status=response.status_code,
                 )
             if on_progress:

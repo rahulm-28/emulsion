@@ -50,8 +50,14 @@ class TokenBucket:
             return 0.0
         return max(0.0, self._recent[0] + self._limit.window_s - self._monotonic())
 
-    def acquire(self, sleep: Callable[[float], None] = time.sleep) -> float:
-        """Block until a slot is free, record the use, and return how long we waited."""
+    def acquire(self, sleep: Callable[[float], None] | None = None) -> float:
+        """Block until a slot is free, record the use, and return how long we waited.
+
+        `sleep` resolves at call time rather than as a default argument: a default binds
+        the function object when the method is defined, which makes it impossible to
+        substitute later — including from a test that would rather not wait 11 seconds.
+        """
+        sleep = sleep or time.sleep
         delay = self.wait_time()
         if delay > 0:
             sleep(delay)
