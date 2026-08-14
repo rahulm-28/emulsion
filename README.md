@@ -90,13 +90,21 @@ Generations cost real money — roughly **$0.53 per 4K image** at current token 
 ### Turning on accounts
 
 Sign-in is off until it is configured, so the default stays "runs on your machine with
-no account". To switch it on, create a Clerk application and set three values:
+no account". Anyone in the world can sign up once it is on — email and password, or a
+social provider.
+
+The web half is one command, which writes `apps/web/.env.local`, `middleware.ts` and the
+`/sign-in` + `/sign-up` routes:
 
 ```bash
-# apps/web/.env.local
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…
+cd apps/web && pnpm dlx clerk@latest auth login
+pnpm dlx clerk@latest init
+```
 
-# the API's environment
+The API half is not something the Clerk CLI knows about — it verifies the JWT itself,
+against the published JWKS, with no call back to Clerk on the request path:
+
+```bash
 export EMULSION_AUTH=clerk
 export CLERK_JWKS_URL=https://YOUR-APP.clerk.accounts.dev/.well-known/jwks.json
 export CLERK_ISSUER=https://YOUR-APP.clerk.accounts.dev
@@ -105,6 +113,15 @@ export CLERK_ISSUER=https://YOUR-APP.clerk.accounts.dev
 Nothing else changes. Every row already carries an owner and every route already filters
 on it — the seam is `packages/platform/identity.py`, and swapping Clerk for anything that
 issues a JWT means writing one class.
+
+Two things worth knowing:
+
+- **Clerk session tokens carry no email by default**, so `users.email` stays blank. Add
+  `{"email": "{{user.primary_email_address}}"}` to the session token in Clerk's dashboard
+  if you want it.
+- **Set a custom domain before going live.** On the development instance the browser
+  talks to `YOUR-APP.clerk.accounts.dev`; a CNAME keeps everything on your own origin,
+  which is one less thing for a user to mistake for a phishing page.
 
 ### The production-shaped stack
 

@@ -1,10 +1,17 @@
 "use client";
 
-import { SignIn, SignedIn, SignedOut } from "@clerk/nextjs";
-import { LogIn } from "lucide-react";
-import { LogoMark } from "../Logo";
+import { RedirectToSignIn, Show } from "@clerk/nextjs";
 
-/** Everything that touches the Clerk SDK lives behind this module boundary. */
+/**
+ * Everything that touches the Clerk SDK lives behind this module boundary.
+ *
+ * `Show` rather than `SignedIn`/`SignedOut`: @clerk/nextjs v7 is Core 3, where those
+ * two are shims that throw at runtime.
+ *
+ * Signed-out visitors are redirected to /sign-in rather than shown a form inline, so
+ * there is exactly one sign-in surface and Clerk's own "create account" link resolves
+ * to the real /sign-up route instead of dead-ending.
+ */
 export default function ClerkGate({
   children,
 }: {
@@ -13,22 +20,10 @@ export default function ClerkGate({
 }) {
   return (
     <>
-      <SignedIn>{children}</SignedIn>
-      <SignedOut>
-        <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-8 px-6">
-          <div className="text-center">
-            <LogoMark className="mx-auto size-9 text-accent-fill" />
-            <h1 className="mt-5 font-serif text-[32px] leading-tight tracking-tight">
-              Emulsion
-            </h1>
-            <p className="mt-2 flex items-center justify-center gap-1.5 text-[13px] text-muted-foreground">
-              <LogIn className="size-3.5" />
-              Sign in to keep your conversations and images
-            </p>
-          </div>
-          <SignIn routing="hash" />
-        </div>
-      </SignedOut>
+      <Show when="signed-in">{children}</Show>
+      <Show when="signed-out">
+        <RedirectToSignIn />
+      </Show>
     </>
   );
 }
