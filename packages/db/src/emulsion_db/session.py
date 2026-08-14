@@ -33,7 +33,17 @@ def make_engine(url: str | None = None) -> Engine:
     if url.startswith("sqlite"):
         # The API and the worker are separate processes hitting the same file.
         connect_args = {"check_same_thread": False, "timeout": 30}
-    engine = create_engine(url, future=True, connect_args=connect_args)
+    try:
+        engine = create_engine(url, future=True, connect_args=connect_args)
+    except ModuleNotFoundError as exc:
+        # The Postgres driver is an optional extra: the default is SQLite and psycopg
+        # needs libpq. Without this, copying .env.example — which documents a Postgres
+        # DATABASE_URL — buries the cause under a SQLAlchemy import traceback.
+        raise RuntimeError(
+            f"DATABASE_URL={url.split('://')[0]}:// needs a driver that is not installed "
+            f"({exc.name}). Either install it with `uv sync --extra postgres`, or unset "
+            "DATABASE_URL to use the default SQLite file."
+        ) from exc
 
     if url.startswith("sqlite"):
 

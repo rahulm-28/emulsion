@@ -15,6 +15,11 @@ dependencies = [
     "emulsion-worker",
 ]
 
+# `uv sync --extra postgres` when DATABASE_URL points at Postgres. Left out of the
+# default install so the offline path needs no libpq.
+[project.optional-dependencies]
+postgres = ["emulsion-db[postgres]"]
+
 [tool.uv]
 package = false
 

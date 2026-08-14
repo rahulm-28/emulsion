@@ -8,6 +8,11 @@ dependencies = [
     "emulsion-platform",
 ]
 
+# Not a hard dependency: the default is a SQLite file, and psycopg pulls libpq. Only
+# needed when DATABASE_URL points at Postgres — `uv sync --extra postgres`.
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

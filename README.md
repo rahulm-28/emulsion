@@ -79,6 +79,11 @@ Copy `.env.example` to `.env` and edit it. The API and worker load the nearest `
 at or above the working directory, so it is found whether you run `make dev` from the
 repo root or `uvicorn` from inside `services/api`.
 
+`.env.example` documents every variable, including ones whose *example values are not
+defaults* — `DATABASE_URL` shows the Postgres form. Copy the file wholesale and the
+offline path stops working, because Postgres needs `uv sync --extra postgres` and a
+running server. Comment out anything you are not deliberately turning on.
+
 **A real environment variable always beats the file.** Anything already exported — by
 `make`, a container, or CI — is a deliberate act, and a file on disk should not
 silently override a deploy's own configuration. `local.mk` is exported by `make` and so
@@ -152,6 +157,7 @@ page is the first thing a new user would otherwise see.
 ### The production-shaped stack
 
 ```bash
+uv sync --extra postgres                               # psycopg is not in the default install
 docker compose up -d                                   # postgres + azurite
 export DATABASE_URL=postgresql+psycopg://emulsion:emulsion@localhost:5432/emulsion
 make api    # in one shell
