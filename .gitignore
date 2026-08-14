@@ -47,3 +47,6 @@ fixtures/large/
 
 # claude local overrides
 .claude/settings.local.json
+
+# machine-local make settings (auth mode, adapter, endpoints)
+local.mk

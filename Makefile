@@ -1,5 +1,13 @@
 .PHONY: install dev api worker web test lint fmt check clean
 
+# Machine-local settings — EMULSION_AUTH, CLERK_*, AZURE_*. Absent by default, and
+# absent means single-user local mode. The API reads os.environ directly, so without
+# this every target would need the variables typed on the command line; forget them
+# with accounts switched on in the browser and the API quietly falls back to the dev
+# identity, filing a signed-in person's work under `local-user`.
+-include local.mk
+export
+
 install:
 	uv sync
 	cd apps/web && pnpm install

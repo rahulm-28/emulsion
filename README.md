@@ -102,13 +102,19 @@ pnpm dlx clerk@latest init
 ```
 
 The API half is not something the Clerk CLI knows about — it verifies the JWT itself,
-against the published JWKS, with no call back to Clerk on the request path:
+against the published JWKS, with no call back to Clerk on the request path. Put the
+three values in `local.mk` (gitignored, read by every `make` target):
 
-```bash
-export EMULSION_AUTH=clerk
-export CLERK_JWKS_URL=https://YOUR-APP.clerk.accounts.dev/.well-known/jwks.json
-export CLERK_ISSUER=https://YOUR-APP.clerk.accounts.dev
+```make
+EMULSION_AUTH = clerk
+CLERK_JWKS_URL = https://YOUR-APP.clerk.accounts.dev/.well-known/jwks.json
+CLERK_ISSUER = https://YOUR-APP.clerk.accounts.dev
 ```
+
+Delete that file to go back to single-user local mode. Setting it on the web side only
+is the one combination to avoid: the browser would send real Clerk tokens while the API
+still ran the dev identity, filing everyone's work under `local-user`. Quick check —
+`curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/sessions` must print `401`.
 
 Nothing else changes. Every row already carries an owner and every route already filters
 on it — the seam is `packages/platform/identity.py`, and swapping Clerk for anything that
