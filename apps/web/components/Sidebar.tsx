@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { AccountButton } from "./AccountButton";
 import { Wordmark } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -259,7 +260,10 @@ export function Sidebar({
               {health && health.queue_depth > 0 && <span>· {health.queue_depth} queued</span>}
             </span>
           </Tooltip>
-          <ThemeToggle />
+          <div className="flex items-center gap-2">
+            <AccountButton />
+            <ThemeToggle />
+          </div>
         </footer>
       </aside>
     </>

@@ -34,7 +34,7 @@ placeholder — **no module is finished**, and each still needs its own spec.
 | **M0** Foundations — stack, execution model, deploy, config | ✅ spec approved |
 | **M1** Provider layer — adapters, auth modes, retry, cost accounting | 🟨 manifests, sizing, cost, throttle, echo + foundry adapters built; **no spec, no managed identity, no BYOK** |
 | **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | 🟨 prompt compiler + constraint packs + spec validation built; ranking primitives built in `imaging`; **no spec, not wired to a UI spec editor** |
-| **M3** App shell — auth, workspaces, sessions, storage, library | 🟨 identity seam with dev + Clerk providers, per-user ownership on every row and route, isolation tested; **no workspaces, no sign-in UI** |
+| **M3** App shell — auth, workspaces, sessions, storage, library | 🟨 identity seam with dev + Clerk, per-user ownership on every row and route, isolation tested, sign-in UI behind a config flag; **no workspaces; the Clerk path has never run against a real account** |
 | **M4** Generation flow — chat UI, job progress, history, reruns | 🟨 conversations, live pipeline, history and reruns work; no streaming partials |
 | **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | 🟨 region crop-composite works end to end — draw an area, edit it, rest of the image stays byte-identical (asserted through the API in a test); **no conversational edit, no mask path** |
 | **M6** Post-processing — upscale, transparency, export, vector text layer | 🟨 derivative pyramid, transparency (border-connected flood fill, refuses on non-flat images), PNG/WebP/JPEG export, Lanczos resize; **no model upscale, no vector text** |

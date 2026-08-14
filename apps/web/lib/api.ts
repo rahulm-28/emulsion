@@ -5,6 +5,8 @@
  * Door does in production. There is deliberately no configurable base URL here.
  */
 
+import { authHeaders } from "./auth";
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface Region {
@@ -136,24 +138,33 @@ async function json<T>(response: Response): Promise<T> {
 
 const noStore: RequestInit = { cache: "no-store" };
 
+/** GET with the session token attached when auth is enabled. */
+async function authedGet(path: string): Promise<Response> {
+  return fetch(path, { ...noStore, headers: await authHeaders() });
+}
+
+async function jsonHeaders(): Promise<Record<string, string>> {
+  return { "Content-Type": "application/json", ...(await authHeaders()) };
+}
+
 export async function getHealth(): Promise<HealthOut> {
-  return json(await fetch("/health", noStore));
+  return json(await authedGet("/health"));
 }
 
 export async function listModels(): Promise<ModelOut[]> {
-  return json(await fetch("/v1/models", noStore));
+  return json(await authedGet("/v1/models"));
 }
 
 export async function getJob(id: string): Promise<JobOut> {
-  return json(await fetch(`/v1/jobs/${id}`, noStore));
+  return json(await authedGet(`/v1/jobs/${id}`));
 }
 
 export async function listSessions(): Promise<SessionOut[]> {
-  return json(await fetch("/v1/sessions", noStore));
+  return json(await authedGet("/v1/sessions"));
 }
 
 export async function listSessionJobs(sessionId: string): Promise<JobOut[]> {
-  return json(await fetch(`/v1/sessions/${sessionId}/jobs`, noStore));
+  return json(await authedGet(`/v1/sessions/${sessionId}/jobs`));
 }
 
 export async function patchSession(
@@ -163,7 +174,7 @@ export async function patchSession(
   return json(
     await fetch(`/v1/sessions/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: await jsonHeaders(),
       body: JSON.stringify(patch),
     }),
   );
@@ -174,18 +185,18 @@ export async function renameSession(id: string, title: string): Promise<SessionO
 }
 
 export async function listStyles(): Promise<StyleOut[]> {
-  return json(await fetch("/v1/styles", noStore));
+  return json(await authedGet("/v1/styles"));
 }
 
 export async function listSuggestions(): Promise<SuggestionOut[]> {
-  return json(await fetch("/v1/styles/suggestions?min_occurrences=3", noStore));
+  return json(await authedGet("/v1/styles/suggestions?min_occurrences=3"));
 }
 
 export async function createStyle(body: StyleIn): Promise<StyleOut> {
   return json(
     await fetch("/v1/styles", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await jsonHeaders(),
       body: JSON.stringify(body),
     }),
   );
@@ -195,32 +206,38 @@ export async function updateStyle(id: string, body: StyleIn): Promise<StyleOut> 
   return json(
     await fetch(`/v1/styles/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: await jsonHeaders(),
       body: JSON.stringify(body),
     }),
   );
 }
 
 export async function deleteStyle(id: string): Promise<void> {
-  const response = await fetch(`/v1/styles/${id}`, { method: "DELETE" });
+  const response = await fetch(`/v1/styles/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
   if (!response.ok && response.status !== 204) {
     throw new Error(`could not delete style (${response.status})`);
   }
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  const response = await fetch(`/v1/sessions/${id}`, { method: "DELETE" });
+  const response = await fetch(`/v1/sessions/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
   if (!response.ok && response.status !== 204) {
     throw new Error(`could not delete session (${response.status})`);
   }
 }
 
 export async function listImages(): Promise<ImageOut[]> {
-  return json(await fetch("/v1/images?limit=60", noStore));
+  return json(await authedGet("/v1/images?limit=60"));
 }
 
 export async function getLineage(imageId: string): Promise<ImageOut[]> {
-  return json(await fetch(`/v1/images/${imageId}/lineage`, noStore));
+  return json(await authedGet(`/v1/images/${imageId}/lineage`));
 }
 
 export interface CreateJobBody {
@@ -238,7 +255,7 @@ export async function createJob(body: CreateJobBody): Promise<JobOut> {
     await fetch("/v1/jobs", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        ...(await jsonHeaders()),
         // Invariant 8. A double-submitted retry must not become a double charge, so
         // the key is generated per submission attempt, not per render.
         "Idempotency-Key": crypto.randomUUID(),
@@ -272,7 +289,7 @@ export async function exportImage(
   return json(
     await fetch(`/v1/images/${imageId}/export`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await jsonHeaders(),
       body: JSON.stringify(body),
     }),
   );

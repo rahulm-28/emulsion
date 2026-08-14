@@ -2,6 +2,7 @@
 
 import { PanelLeft, PanelRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AuthGate } from "@/components/AuthGate";
 import { Composer } from "@/components/Composer";
 import { Inspector } from "@/components/Inspector";
 import { LogoMark } from "@/components/Logo";
@@ -46,7 +47,15 @@ const SUGGESTIONS = [
   },
 ];
 
-export default function Studio() {
+export default function Page() {
+  return (
+    <AuthGate>
+      <Studio />
+    </AuthGate>
+  );
+}
+
+function Studio() {
   const [models, setModels] = useState<ModelOut[]>([]);
   const [health, setHealth] = useState<HealthOut | null>(null);
   const [sessions, setSessions] = useState<SessionOut[]>([]);

@@ -79,11 +79,32 @@ Generations cost real money — roughly **$0.53 per 4K image** at current token 
 |---|---|---|
 | `EMULSION_ADAPTER` | `echo` | `echo` (offline, free) or `foundry` (real) |
 | `EMULSION_AUTH` | `dev` | `dev` is one implicit local user; `clerk` verifies real session JWTs |
+| `CLERK_JWKS_URL` / `CLERK_ISSUER` | — | Only for `EMULSION_AUTH=clerk` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | Turns the sign-in UI on; absent means local mode |
 | `EMULSION_DATA_DIR` | `.data` | SQLite file and the local blob store |
 | `DATABASE_URL` | SQLite in `EMULSION_DATA_DIR` | Point at Postgres for the production shape |
 | `EMULSION_INLINE_WORKER` | `1` | `0` runs the worker as its own process, as production does |
 | `EMULSION_ECHO_LATENCY_S` | `0.6` | Fake generation latency, so progress is observable |
 | `AZURE_ENDPOINT` / `AZURE_API_KEY` | — | Only needed for `EMULSION_ADAPTER=foundry` |
+
+### Turning on accounts
+
+Sign-in is off until it is configured, so the default stays "runs on your machine with
+no account". To switch it on, create a Clerk application and set three values:
+
+```bash
+# apps/web/.env.local
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…
+
+# the API's environment
+export EMULSION_AUTH=clerk
+export CLERK_JWKS_URL=https://YOUR-APP.clerk.accounts.dev/.well-known/jwks.json
+export CLERK_ISSUER=https://YOUR-APP.clerk.accounts.dev
+```
+
+Nothing else changes. Every row already carries an owner and every route already filters
+on it — the seam is `packages/platform/identity.py`, and swapping Clerk for anything that
+issues a JWT means writing one class.
 
 ### The production-shaped stack
 

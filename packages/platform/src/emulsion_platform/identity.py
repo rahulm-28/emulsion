@@ -22,10 +22,7 @@ Swapping providers means writing one class. Nothing above this file names Clerk.
 
 from __future__ import annotations
 
-import json
 import os
-import time
-import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -72,12 +69,14 @@ class DevIdentity(IdentityProvider):
 
 
 class ClerkIdentity(IdentityProvider):
-    """Verifies a Clerk session JWT.
+    """Verifies a Clerk session JWT against their published JWKS.
 
-    ponytail: RS256 verification via PyJWT against a cached JWKS. Clerk rotates keys
-    rarely, so the cache TTL is an hour and a miss simply refetches. If a key rotates
-    mid-flight the first request after it fails and the second succeeds — acceptable for
-    a rotation measured in months, and the alternative is a refetch on every request.
+    The signing key client is built once and reused. An earlier version constructed one
+    per request, which meant the advertised cache did nothing and every call re-fetched
+    the key set — a network round trip in front of every API call.
+
+    `jwk_client` is injectable so the verification path can be tested against a locally
+    generated key pair, without a Clerk account and without a network.
     """
 
     def __init__(
@@ -87,53 +86,57 @@ class ClerkIdentity(IdentityProvider):
         issuer: str | None = None,
         audience: str | None = None,
         cache_seconds: int = 3600,
+        jwk_client: object | None = None,
+        leeway: int = 30,
     ) -> None:
         self.jwks_url = jwks_url or os.environ.get("CLERK_JWKS_URL", "")
         self.issuer = issuer or os.environ.get("CLERK_ISSUER", "")
         self.audience = audience or os.environ.get("CLERK_AUDIENCE") or None
+        # Clocks drift; a few seconds of leeway avoids rejecting a token that is valid
+        # everywhere except on this machine.
+        self.leeway = leeway
+
+        if jwk_client is not None:
+            self._jwk_client = jwk_client
+            return
         if not self.jwks_url:
             raise ValueError(
                 "CLERK_JWKS_URL is required when EMULSION_AUTH=clerk. "
                 "Unset EMULSION_AUTH to run single-user locally."
             )
-        self._cache_seconds = cache_seconds
-        self._jwks: dict | None = None
-        self._fetched_at = 0.0
+        from jwt import PyJWKClient
 
-    def _keys(self) -> dict:
-        if self._jwks is None or time.time() - self._fetched_at > self._cache_seconds:
-            with urllib.request.urlopen(self.jwks_url, timeout=10) as response:  # noqa: S310
-                self._jwks = json.loads(response.read())
-            self._fetched_at = time.time()
-        return self._jwks
+        self._jwk_client = PyJWKClient(self.jwks_url, cache_keys=True, lifespan=cache_seconds)
 
     def authenticate(self, token: str | None) -> Principal:
         if not token:
             raise AuthError("no token")
-        try:
-            import jwt
-            from jwt import PyJWKClient
-        except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
-            raise AuthError("pyjwt is not installed") from exc
+
+        import jwt
 
         try:
-            signing_key = PyJWKClient(self.jwks_url).get_signing_key_from_jwt(token)
+            signing_key = self._jwk_client.get_signing_key_from_jwt(token)
             claims = jwt.decode(
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
                 issuer=self.issuer or None,
                 audience=self.audience,
-                options={"verify_aud": bool(self.audience)},
+                leeway=self.leeway,
+                options={
+                    "verify_aud": bool(self.audience),
+                    "require": ["exp", "sub"],
+                },
             )
         except Exception as exc:
             # Deliberately opaque: the caller learns that it failed, never which check
-            # failed, because that difference is a probing oracle.
+            # failed, because that difference is a probing oracle. The detail is kept on
+            # __cause__ for a server-side log.
             raise AuthError("token rejected") from exc
 
         subject = claims.get("sub")
         if not subject:
-            raise AuthError("token carries no subject")
+            raise AuthError("token rejected")
         return Principal(
             subject=str(subject),
             email=str(claims.get("email") or ""),

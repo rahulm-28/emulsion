@@ -3,7 +3,11 @@ name = "emulsion-platform"
 version = "0.1.0"
 description = "The three portability protocols and their local implementations."
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    # Only used by ClerkIdentity. Declared rather than imported optionally because a
+    # missing auth dependency should fail at install time, not on the first sign-in.
+    "pyjwt[crypto]>=2.9",
+]
 
 [build-system]
 requires = ["hatchling"]
