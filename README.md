@@ -75,6 +75,16 @@ Generations cost real money — roughly **$0.53 per 4K image** at current token 
 
 ### Configuration
 
+Copy `.env.example` to `.env` and edit it. The API and worker load the nearest `.env`
+at or above the working directory, so it is found whether you run `make dev` from the
+repo root or `uvicorn` from inside `services/api`.
+
+**A real environment variable always beats the file.** Anything already exported — by
+`make`, a container, or CI — is a deliberate act, and a file on disk should not
+silently override a deploy's own configuration. `local.mk` is exported by `make` and so
+outranks `.env`; delete it once `.env` holds the same values, or the stale copy wins
+without saying so.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `EMULSION_ADAPTER` | `echo` | `echo` (offline, free) or `foundry` (real) |
@@ -102,18 +112,18 @@ pnpm dlx clerk@latest init
 ```
 
 The API half is not something the Clerk CLI knows about — it verifies the JWT itself,
-against the published JWKS, with no call back to Clerk on the request path. Put the
-three values in `local.mk` (gitignored, read by every `make` target):
+against the published JWKS, with no call back to Clerk on the request path. Copy
+`.env.example` to `.env` and set three values:
 
-```make
-EMULSION_AUTH = clerk
-CLERK_JWKS_URL = https://YOUR-APP.clerk.accounts.dev/.well-known/jwks.json
-CLERK_ISSUER = https://YOUR-APP.clerk.accounts.dev
+```bash
+EMULSION_AUTH=clerk
+CLERK_JWKS_URL=https://YOUR-APP.clerk.accounts.dev/.well-known/jwks.json
+CLERK_ISSUER=https://YOUR-APP.clerk.accounts.dev
 ```
 
-Delete that file to go back to single-user local mode. Setting it on the web side only
-is the one combination to avoid: the browser would send real Clerk tokens while the API
-still ran the dev identity, filing everyone's work under `local-user`. Quick check —
+Remove them to go back to single-user local mode. Setting it on the web side only is the
+one combination to avoid: the browser would send real Clerk tokens while the API still
+ran the dev identity, filing everyone's work under `local-user`. Quick check —
 `curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/sessions` must print `401`.
 
 Nothing else changes. Every row already carries an owner and every route already filters

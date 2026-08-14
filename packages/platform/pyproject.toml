@@ -7,6 +7,9 @@ dependencies = [
     # Only used by ClerkIdentity. Declared rather than imported optionally because a
     # missing auth dependency should fail at install time, not on the first sign-in.
     "pyjwt[crypto]>=2.9",
+    # Reaches the venv transitively via uvicorn[standard] today. Declared because
+    # `.env` loading is a documented feature, not something to inherit by accident.
+    "python-dotenv>=1.0",
 ]
 
 [build-system]

@@ -242,10 +242,14 @@ version = "0.1.0"
 source = { editable = "packages/platform" }
 dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" }]
+requires-dist = [
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+]
 
 [[package]]
 name = "emulsion-providers"

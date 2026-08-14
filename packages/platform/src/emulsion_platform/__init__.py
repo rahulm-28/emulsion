@@ -1,5 +1,6 @@
 """Portability protocols (M0 §8), the identity seam, and local implementations."""
 
+from .env import find_env, load_env
 from .identity import (
     DEV_USER_EMAIL,
     DEV_USER_ID,
@@ -27,5 +28,7 @@ __all__ = [
     "Principal",
     "Queue",
     "SecretStore",
+    "find_env",
     "identity_provider",
+    "load_env",
 ]
