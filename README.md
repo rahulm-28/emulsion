@@ -114,14 +114,24 @@ Nothing else changes. Every row already carries an owner and every route already
 on it — the seam is `packages/platform/identity.py`, and swapping Clerk for anything that
 issues a JWT means writing one class.
 
-Two things worth knowing:
+Clerk session tokens carry no profile fields by default, so the session needs two
+claims before `users.email` is anything but blank:
 
-- **Clerk session tokens carry no email by default**, so `users.email` stays blank. Add
-  `{"email": "{{user.primary_email_address}}"}` to the session token in Clerk's dashboard
-  if you want it.
-- **Set a custom domain before going live.** On the development instance the browser
-  talks to `YOUR-APP.clerk.accounts.dev`; a CNAME keeps everything on your own origin,
-  which is one less thing for a user to mistake for a phishing page.
+```bash
+clerk config patch --json '{"session":{"claims":{
+  "email":"{{user.primary_email_address}}","name":"{{user.full_name}}"}}}'
+```
+
+The API copies both onto the user row on every request, not just the first, so a claim
+added after an account exists still lands on it.
+
+**Set a custom domain before going live.** On the development instance the browser talks
+to `YOUR-APP.clerk.accounts.dev`; a CNAME keeps everything on your own origin, which is
+one less thing for a user to mistake for a phishing page.
+
+Clerk's own screens follow the app's theme in both light and dark — the palette is
+mapped in `components/clerk/ClerkRoot.tsx`, since a white sign-in card on a near-black
+page is the first thing a new user would otherwise see.
 
 ### The production-shaped stack
 

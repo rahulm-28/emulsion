@@ -110,6 +110,17 @@ def current_user(
         session.add(user)
         session.commit()
         session.refresh(user)
+    elif (principal.email and principal.email != user.email) or (
+        principal.display_name and principal.display_name != user.display_name
+    ):
+        # The identity provider is the source of truth for both, and either can change
+        # after the row exists — a new claim configured on the token, or the person
+        # editing their profile. Writing only on insert would pin whatever happened to
+        # be in the very first token forever.
+        user.email = principal.email or user.email
+        user.display_name = principal.display_name or user.display_name
+        session.commit()
+        session.refresh(user)
     return user
 
 

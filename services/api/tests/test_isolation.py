@@ -174,3 +174,54 @@ def test_another_users_image_cannot_be_exported(two_users):
     image = make_job(client, alice)["images"][0]
     response = client.post(f"/v1/images/{image['id']}/export", json={"format": "png"}, headers=bob)
     assert response.status_code == 404
+
+
+class MutableIdentity:
+    """A principal whose profile fields can change between requests. Tests only."""
+
+    def __init__(self) -> None:
+        self.email = ""
+        self.display_name = ""
+
+    def authenticate(self, token: str | None) -> Principal:
+        if not token:
+            raise AuthError("no token")
+        return Principal(subject=token, email=self.email, display_name=self.display_name)
+
+    @property
+    def requires_token(self) -> bool:
+        return True
+
+
+def test_profile_fields_follow_the_identity_provider(monkeypatch):
+    """A claim that appears after the row exists still lands on it.
+
+    Clerk session tokens carry no email until the claim is configured, so the row is
+    created blank and only a later token can fill it. Writing profile fields on insert
+    only would pin that first empty value permanently.
+    """
+    identity = MutableIdentity()
+    monkeypatch.setattr(main, "_identity", identity)
+    headers = {"Authorization": "Bearer carol"}
+
+    with TestClient(main.app) as client:
+        assert client.get("/v1/sessions", headers=headers).status_code == 200
+
+        identity.email = "carol@example.com"
+        identity.display_name = "Carol"
+        assert client.get("/v1/sessions", headers=headers).status_code == 200
+
+        from emulsion_db import User, get_sessionmaker
+        from sqlalchemy import select
+
+        with get_sessionmaker()() as db:
+            user = db.execute(select(User).where(User.subject == "carol")).scalar_one()
+            assert user.email == "carol@example.com"
+            assert user.display_name == "Carol"
+
+        # An empty claim must not wipe a value that is already known.
+        identity.email = ""
+        assert client.get("/v1/sessions", headers=headers).status_code == 200
+        with get_sessionmaker()() as db:
+            user = db.execute(select(User).where(User.subject == "carol")).scalar_one()
+            assert user.email == "carol@example.com"
