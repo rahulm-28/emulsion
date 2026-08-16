@@ -10,12 +10,13 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import replace
 
 from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, new_id, session_scope, utcnow
 from emulsion_engine import HouseStyle, JobSpec, run
-from emulsion_imaging import build_pyramid, to_png
+from emulsion_imaging import build_pyramid, rank_diagrams, score_diagram, to_array, to_png
 from emulsion_providers import cost_usd, load_manifest
 from emulsion_providers.adapters import get_adapter
 from emulsion_providers.adapters.base import ProviderError
@@ -89,6 +90,38 @@ def store_image(
     )
     session.add(image)
     return image
+
+
+Stored = tuple[bytes, str, int, int]
+
+
+def _rank_generated(
+    job_id: str,
+    stored: list[Stored],
+    progress: Callable[[str], None],
+) -> list[Stored]:
+    """Order K candidates best first, and say why in the event trail.
+
+    The crop-composite path already ranks, because it has the parent to compare
+    against. A plain generation has no reference, so without this K candidates come
+    back and the person picks by eye — which is the model's job done twice and the
+    layer above it doing nothing.
+
+    Ordering rather than discarding: the losers stay in the library, because the score
+    is a heuristic prior and being overruled is a normal outcome.
+    """
+    try:
+        scores = [score_diagram(to_array(data)) for data, *_ in stored]
+    except Exception:  # noqa: BLE001 - a scoring failure must not lose the images
+        log.exception("job %s: candidate scoring failed; keeping generation order", job_id)
+        emit(job_id, "warning", "could not rank candidates; showing them in generation order")
+        return stored
+
+    order = rank_diagrams(scores)
+    progress(f"ranked {len(stored)} candidates; best {scores[order[0]].explain()}")
+    for position, index in enumerate(order[1:], start=2):
+        emit(job_id, "progress", f"#{position}: {scores[index].explain()}")
+    return [stored[i] for i in order]
 
 
 def process_job(job_id: str) -> None:
@@ -169,6 +202,8 @@ def process_job(job_id: str) -> None:
         stored = [(composited, "image/png", winner.image.shape[1], winner.image.shape[0])]
     else:
         stored = [(g.data, g.content_type, g.width, g.height) for g in result.images]
+        if len(stored) > 1:
+            stored = _rank_generated(job_id, stored, progress)
 
     with session_scope() as session:
         job = session.get(Job, job_id)
