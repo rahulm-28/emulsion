@@ -69,4 +69,15 @@ cost_model:
 
 # confirmed — 400: "The model 'gpt-image-2' does not support the 'input_fidelity'
 # parameter." Model-level rejection, not an api-version artefact.
-unsupported_params: [input_fidelity]
+#
+# `seed` — confirmed 2026-08-16 against the live deployment. 400
+# {"code": "unknown_parameter", "message": "Unknown parameter: 'seed'."} The parameter
+# does not exist on this model, so it cannot be an api-version artefact either.
+#
+# This closes M0 §14's open item and settles M2's economics the expensive way: there is
+# no reproducible seed, so K cheap small candidates cannot be ranked and the winner
+# re-rendered at 4K. Ranking must happen at the final resolution — ~$2.13 per action at
+# K=4 rather than ~$0.55. Two consequences follow: candidate ranking is worth more, not
+# less, because a re-roll cannot be recovered; and `n` should stay low by default, with
+# n=2 the sweet spot since two images come back in one request and one rate-limit slot.
+unsupported_params: [input_fidelity, seed]

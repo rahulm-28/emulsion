@@ -255,13 +255,19 @@ def test_redact_host_leaves_paths_intact():
 
 
 def test_a_missing_endpoint_points_at_the_free_alternative(monkeypatch):
-    monkeypatch.delenv("AZURE_ENDPOINT", raising=False)
+    # Both names, because a developer's real .env is loaded into this process:
+    # services/api imports at collection time and its __init__ calls load_env().
+    # Clearing only one name lets a filled .env satisfy the adapter and this test
+    # then asserts nothing.
+    for name in ("AZURE_FOUNDRY_ENDPOINT", "AZURE_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(ProviderError, match="echo"):
         FoundryAdapter(api_key=SECRET)
 
 
 def test_a_missing_key_is_refused(monkeypatch):
-    monkeypatch.delenv("AZURE_API_KEY", raising=False)
+    for name in ("AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(ProviderError, match="No credential"):
         FoundryAdapter(endpoint=ENDPOINT)
 
@@ -274,3 +280,33 @@ def test_get_adapter_defaults_to_echo_so_nothing_costs_money_by_accident():
 def test_get_adapter_rejects_an_unknown_name():
     with pytest.raises(ValueError, match="Unknown adapter"):
         get_adapter("stable-diffusion")
+
+
+def test_the_v1_surface_gets_no_api_version():
+    """Confirmed against the live deployment: /openai/v1/ rejects the parameter.
+
+    400 {"code": "BadRequest", "message": "API version not supported"}. Appending it
+    made the adapter fail on its very first real call while every mocked test passed.
+    """
+    from emulsion_providers.adapters.foundry import _endpoint_pair
+
+    gen, edit = _endpoint_pair(
+        "https://example.services.ai.azure.com/openai/v1/images/generations",
+        "2025-04-01-preview",
+    )
+    assert "api-version" not in gen
+    assert "api-version" not in edit
+    assert gen.endswith("/openai/v1/images/generations")
+    assert edit.endswith("/openai/v1/images/edits")
+
+
+def test_the_deployments_surface_still_pins_the_api_version():
+    """The older path needs it, so the rule is about the path, not the account."""
+    from emulsion_providers.adapters.foundry import _endpoint_pair
+
+    gen, edit = _endpoint_pair(
+        "https://example.openai.azure.com/openai/deployments/gpt-image-2/images/generations",
+        "2025-04-01-preview",
+    )
+    assert "api-version=2025-04-01-preview" in gen
+    assert "api-version=2025-04-01-preview" in edit

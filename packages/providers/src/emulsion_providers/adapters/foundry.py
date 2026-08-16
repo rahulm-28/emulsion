@@ -51,12 +51,29 @@ def _endpoint_pair(endpoint: str, api_version: str) -> tuple[str, str]:
         path = path.rstrip("/") + "/images/generations"
     gen_path = re.sub(r"/images/(generations|edits)", "/images/generations", path)
     edit_path = re.sub(r"/images/(generations|edits)", "/images/edits", path)
-    query = f"api-version={api_version}"
+    # The /openai/v1/ surface is versionless and rejects the parameter outright:
+    # 400 {"code": "BadRequest", "message": "API version not supported"}. Confirmed
+    # against the live deployment 2026-08-16. The older /openai/deployments/ surface
+    # still requires it, so this is a property of the path, not of the account.
+    query = "" if "/openai/v1/" in path else f"api-version={api_version}"
     base = (parts.scheme, parts.netloc)
     return (
         urlunsplit((*base, gen_path, query, "")),
         urlunsplit((*base, edit_path, query, "")),
     )
+
+
+def _env(*names: str) -> str:
+    """First non-empty environment variable from `names`, or "".
+
+    Several names for one value is a smell, but renaming the documented one would
+    break every .env already written against it.
+    """
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 class FoundryAdapter:
@@ -71,19 +88,24 @@ class FoundryAdapter:
         client: httpx.Client | None = None,
     ) -> None:
         self.manifest = manifest or load_manifest("gpt-image-2")
-        endpoint = endpoint or os.environ.get("AZURE_ENDPOINT", "")
+        # AZURE_FOUNDRY_* is what .env.example documents and what people actually fill
+        # in; AZURE_* was what this file read. The two drifted apart, so a correctly
+        # filled .env reached nothing and the adapter reported "no endpoint configured"
+        # at a person who had just configured it. Documented names win, old names still
+        # work.
+        endpoint = endpoint or _env("AZURE_FOUNDRY_ENDPOINT", "AZURE_ENDPOINT")
         if not endpoint:
             raise ProviderError(
-                "No endpoint configured. Set AZURE_ENDPOINT, or use the echo adapter "
+                "No endpoint configured. Set AZURE_FOUNDRY_ENDPOINT, or use the echo adapter "
                 "(EMULSION_ADAPTER=echo) to run without a provider."
             )
-        self._api_key = api_key or os.environ.get("AZURE_API_KEY", "")
+        self._api_key = api_key or _env("AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY")
         if not self._api_key:
             # ponytail: key auth only. The hosted tier is meant to use managed identity
             # (DefaultAzureCredential + get_bearer_token_provider, scope
             # https://cognitiveservices.azure.com/.default). That needs `azure-identity`
             # and a logged-in principal; add it when the platform tier exists (M8).
-            raise ProviderError("No credential configured. Set AZURE_API_KEY.")
+            raise ProviderError("No credential configured. Set AZURE_FOUNDRY_API_KEY.")
         self.generations_url, self.edits_url = _endpoint_pair(endpoint, self.manifest.api_version)
         self._client = client or httpx.Client(timeout=REQUEST_TIMEOUT_S)
         self._bucket = TokenBucket(self.manifest.rate_limit)
