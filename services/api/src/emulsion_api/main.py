@@ -18,7 +18,7 @@ from typing import Annotated
 from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, User, get_sessionmaker, utcnow
 from emulsion_db import Session as DbSession
-from emulsion_engine import extract_recurring
+from emulsion_engine import classify, extract_recurring
 from emulsion_imaging import export as imaging_export
 from emulsion_platform import AuthError, Principal, identity_provider
 from emulsion_providers import SIZE_PRESETS, available_models, load_manifest
@@ -190,6 +190,22 @@ def _image_out(image: Image) -> ImageOut:
     )
 
 
+def _latest_image_in(session: Session, chat_id: str, owner_id: str) -> Image | None:
+    """The most recent image in this conversation, or None.
+
+    Scoped by owner as well as conversation: the conversation is already the caller's,
+    but every query that reaches images repeats the ownership filter rather than
+    trusting an earlier check to have happened.
+    """
+    return session.execute(
+        select(Image)
+        .join(Job, Image.job_id == Job.id)
+        .where(Job.session_id == chat_id, Image.owner_id == owner_id)
+        .order_by(Image.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _job_out(job: Job) -> JobOut:
     return JobOut(
         id=job.id,
@@ -347,6 +363,19 @@ def create_job(
         if existing is not None:
             return _job_out(existing)
 
+    # Conversational edit: "make the title bigger" with a picture already on screen is
+    # a change to that picture, not a new one. Only inferred when the caller did not
+    # say — an explicit parent_image_id or a drawn region is a decision already made.
+    routing: str | None = None
+    parent_image_id = body.parent_image_id
+    if parent_image_id is None and body.region is None:
+        previous = _latest_image_in(session, chat.id, user.id)
+        if previous is not None:
+            intent = classify(body.prompt, has_previous_image=True)
+            if intent.is_edit:
+                parent_image_id = previous.id
+                routing = f"editing your previous image — {intent.reason}"
+
     job = Job(
         idempotency_key=idempotency_key,
         owner_id=user.id,
@@ -361,7 +390,7 @@ def create_job(
         prompt=body.prompt,
         size=body.size,
         n=body.n,
-        parent_image_id=body.parent_image_id,
+        parent_image_id=parent_image_id,
     )
     session.add(job)
     try:
@@ -379,6 +408,12 @@ def create_job(
         return _job_out(existing)
 
     session.refresh(job)
+    if routing is not None:
+        # Seq 0, before the worker writes anything: the routing decision is the first
+        # thing that happened to this job, and the person must be able to see that it
+        # was made and disagree with it.
+        session.add(JobEvent(job_id=job.id, seq=0, kind="status", message=routing))
+        session.commit()
     queue().enqueue({"job_id": job.id})
     return _job_out(job)
 

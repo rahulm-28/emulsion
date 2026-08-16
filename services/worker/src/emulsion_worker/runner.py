@@ -15,7 +15,7 @@ from dataclasses import replace
 
 from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, new_id, session_scope, utcnow
-from emulsion_engine import HouseStyle, JobSpec, run
+from emulsion_engine import HouseStyle, JobSpec, refine, run
 from emulsion_imaging import build_pyramid, rank_diagrams, score_diagram, to_array, to_png
 from emulsion_providers import cost_usd, load_manifest
 from emulsion_providers.adapters import get_adapter
@@ -137,8 +137,18 @@ def process_job(job_id: str) -> None:
         job.started_at = utcnow()
         region = parse_region(job.region)
         parent_key = next(iter(_parent_blob_keys(session, job)), None)
+        prompt = job.prompt
+        if parent_key is not None and region is None:
+            # A conversational edit. The model regenerates the whole image on every
+            # edit call, so sending only "make the title bigger" re-rolls everything
+            # that was already right against a prompt that no longer describes the
+            # diagram. The parent's prompt is what makes it an edit rather than a new
+            # picture that happens to have a bigger title.
+            parent = session.get(Image, job.parent_image_id) if job.parent_image_id else None
+            if parent is not None and parent.prompt:
+                prompt = refine(parent.prompt, job.prompt)
         spec = JobSpec(
-            prompt=job.prompt,
+            prompt=prompt,
             model_id=job.model_id,
             size=job.size,
             n=job.n,

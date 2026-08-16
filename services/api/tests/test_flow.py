@@ -514,3 +514,70 @@ def test_export_reports_whether_transparency_applied(client):
     ).json()
     assert body["background_uniform"] is True
     assert body["has_alpha"] is True
+
+
+def test_a_chat_message_becomes_an_edit_of_the_previous_image(client):
+    """Conversational edit: no region drawn, no parent given, and it still edits.
+
+    This is M5's headline. Typing "make the title bigger" after a generation has to
+    act on that generation, or the layer is doing nothing the model does not already.
+    """
+    first = client.post(
+        "/v1/jobs", json={"prompt": "a four-zone architecture diagram", "size": "1k"}
+    )
+    job = drain(client, first.json()["id"])
+    assert job["status"] == "succeeded", job
+    parent = job["images"][0]["id"]
+    session_id = job["session_id"]
+
+    second = client.post(
+        "/v1/jobs",
+        json={"prompt": "make the title bigger", "size": "1k", "session_id": session_id},
+    ).json()
+    assert second["parent_image_id"] == parent, second
+
+    edited = drain(client, second["id"])
+    assert edited["status"] == "succeeded", edited
+    reasons = [e["message"] for e in edited["events"]]
+    assert any("editing your previous image" in m for m in reasons), reasons
+
+
+def test_a_fresh_subject_does_not_hijack_the_previous_image(client):
+    """The inverse matters more: a new request must not be silently reinterpreted."""
+    first = client.post(
+        "/v1/jobs", json={"prompt": "a four-zone architecture diagram", "size": "1k"}
+    )
+    job = drain(client, first.json()["id"])
+    session_id = job["session_id"]
+
+    second = client.post(
+        "/v1/jobs",
+        json={
+            "prompt": "a sequence diagram of the login flow",
+            "size": "1k",
+            "session_id": session_id,
+        },
+    ).json()
+    assert second["parent_image_id"] is None, second
+    drain(client, second["id"])
+
+
+def test_an_explicit_parent_is_never_overridden(client):
+    """A caller who said what to edit has already decided; inference must not run."""
+    first = client.post(
+        "/v1/jobs", json={"prompt": "a four-zone architecture diagram", "size": "1k"}
+    )
+    job = drain(client, first.json()["id"])
+    parent = job["images"][0]["id"]
+
+    second = client.post(
+        "/v1/jobs",
+        json={
+            "prompt": "a completely different sequence diagram",
+            "size": "1k",
+            "session_id": job["session_id"],
+            "parent_image_id": parent,
+        },
+    ).json()
+    assert second["parent_image_id"] == parent
+    drain(client, second["id"])
