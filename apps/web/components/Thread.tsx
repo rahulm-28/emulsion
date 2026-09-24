@@ -8,6 +8,8 @@ import {
   Pencil,
   RotateCw,
   Sparkles,
+  ImagePlus,
+  GitBranch,
 } from "lucide-react";
 import type { ImageOut, JobOut } from "@/lib/api";
 import { formatCost, formatDuration } from "@/lib/format";
@@ -37,6 +39,15 @@ export function deriveStages(job: JobOut): Stage[] {
   const failed = job.status === "failed";
   const done = job.status === "succeeded";
   const started = job.status !== "queued";
+
+  if (job.kind === "upload") {
+    return [{
+      key: "import",
+      label: done ? "Image ready" : failed ? "Could not import image" : "Preparing image",
+      detail: done ? "Saved to this conversation" : messages.at(-1) ?? "Checking the file and creating previews",
+      state: failed ? "failed" : done ? "done" : "active",
+    }];
+  }
 
   const state = (reached: boolean, next: boolean): StageState => {
     if (failed && !reached) return "failed";
@@ -79,7 +90,7 @@ function Pipeline({ job }: { job: JobOut }) {
   return (
     <ol
       className="w-fit min-w-[16rem] space-y-3 rounded-xl border border-border bg-card p-3.5"
-      aria-label="Generation pipeline"
+      aria-label={job.kind === "upload" ? "Image preparation" : "Generation pipeline"}
       aria-live="polite"
     >
       {stages.map((stage, index) => (
@@ -164,9 +175,10 @@ interface Props {
   onSelectImage: (image: ImageOut) => void;
   onEdit: (image: ImageOut) => void;
   onRerun: (job: JobOut) => void;
+  onUseDiagram: (job: JobOut) => void;
 }
 
-export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun }: Props) {
+export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun, onUseDiagram }: Props) {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-9 px-4 py-8">
       {jobs.map((job) => (
@@ -179,12 +191,24 @@ export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun }
 
           <div className="flex gap-3">
             <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg border border-border bg-card text-accent-fill">
-              <Sparkles className="size-3.5" />
+              {job.kind === "upload" ? <ImagePlus className="size-3.5" /> : <Sparkles className="size-3.5" />}
             </span>
 
             <div className="min-w-0 flex-1 space-y-3">
+              {job.parent_image_id && <p className="text-xs text-muted-foreground">Editing an earlier image{job.region ? " · selected area" : ""}</p>}
+              {job.diagram && <Button variant="ghost" size="sm" onClick={() => onUseDiagram(job)} className="max-w-full">
+                <GitBranch /><span className="truncate">Use structure · {job.diagram.title}</span>
+              </Button>}
               {job.status !== "succeeded" && <Pipeline job={job} />}
-              {job.status === "running" && <Placeholder size={job.size} />}
+              {job.status === "running" && job.kind !== "upload" && <Placeholder size={job.size} />}
+
+              {job.kind === "upload" && job.status === "succeeded" && (
+                <p className="text-xs text-muted-foreground">Uploaded image · ready to edit</p>
+              )}
+
+              {job.events.filter((event) => event.kind === "warning").map((event) => (
+                <Notice key={event.seq} tone="warn">{event.message}</Notice>
+              ))}
 
               {job.error && <Notice tone="error">{job.error}</Notice>}
 
@@ -209,7 +233,7 @@ export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun }
                       <button
                         type="button"
                         onClick={() => onSelectImage(image)}
-                        aria-label={`Select candidate ${index + 1}`}
+                        aria-label={job.kind === "upload" ? "Select uploaded image" : `Select candidate ${index + 1}`}
                         className={cn(
                           "block w-full cursor-pointer overflow-hidden rounded-xl border transition-colors duration-200",
                           image.id === selectedImageId
@@ -220,7 +244,7 @@ export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun }
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={image.viewer_url}
-                          alt={image.prompt}
+                          alt={image.prompt || "Uploaded source image"}
                           loading="lazy"
                           className="w-full object-cover"
                           style={{ aspectRatio: `${image.width} / ${image.height}` }}
@@ -283,19 +307,19 @@ export function Thread({ jobs, selectedImageId, onSelectImage, onEdit, onRerun }
                     {job.images[0]?.width}×{job.images[0]?.height}
                   </span>
                   <span aria-hidden>·</span>
-                  <span>{job.output_tokens?.toLocaleString()} tok</span>
+                  <span>{job.kind === "upload" ? "Imported" : `${job.output_tokens?.toLocaleString()} tok`}</span>
                   <span aria-hidden>·</span>
                   <span>{formatCost(job.cost_usd)}</span>
                   <span aria-hidden>·</span>
                   <span>{formatDuration(job.started_at, job.finished_at)}</span>
-                  <button
+                  {job.kind !== "upload" && <button
                     type="button"
                     onClick={() => onRerun(job)}
                     className="-my-2 inline-flex cursor-pointer items-center gap-1 py-2 text-accent underline-offset-2 transition-colors duration-200 hover:underline"
                   >
                     <RotateCw className="size-3" />
                     rerun
-                  </button>
+                  </button>}
                 </div>
               )}
             </div>

@@ -305,4 +305,15 @@ def compile_prompt(
         spec = infer_spec(
             user_intent, house_legend=house_legend or (style.legend if style else None)
         )
-    return render(spec, manifest, style=style)
+    compiled = render(spec, manifest, style=style)
+    if user_intent.strip():
+        # Inference is deliberately shallow, and an explicit spec previously ignored
+        # intent entirely. Never lose requested details or conversational corrections.
+        return CompiledPrompt(
+            text=(
+                f"{compiled.text}\n\nUser instructions (take precedence for requested changes):\n"
+                f"{user_intent.strip()}"
+            ),
+            warnings=compiled.warnings,
+        )
+    return compiled

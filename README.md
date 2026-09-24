@@ -38,9 +38,12 @@ publicly because the problem is not unique to me — if you generate technical i
 have hit the same walls, take it, run it, change it. It runs entirely on your machine with
 no cloud account and no API key (see below), so trying it costs nothing.
 
-**Fair warning on where it actually is:** generation, region editing, sessions, lineage
-and cost accounting all work end to end. What is missing is accounts, billing, and the
-learned-constraint work — and there is no conversational edit yet, only draw-an-area.
+**Current scope:** generation, image uploads, conversational and region editing, sessions,
+lineage, a structured diagram editor with prompt preview, Clerk accounts, house styles,
+constraint suggestions, and cost tracking are built. Billing remains a stub. BYOK,
+workspaces, model upscaling,
+vector text, and production storage/deployment are still unfinished. Offline checks cover
+the full flow; a complete real-model run through the app remains to be verified.
 Read [CLAUDE.md](CLAUDE.md) for an honest per-module status before assuming a feature
 exists.
 
@@ -58,6 +61,26 @@ make dev            # API on :8000, web on :3000
 
 Open **http://localhost:3000**.
 
+If `.env` or `local.mk` already selects Clerk or PostgreSQL, use `make dev-local` for a
+free, isolated demo. It uses the echo provider, SQLite, and a separate `.data-local/`
+directory, without changing those configuration files. Echo produces test diagrams;
+it does not perform a real AI edit.
+
+### Edit an existing image
+
+Click **Attach image**, drop a file onto the composer, or paste an image. PNG, JPEG, and
+WebP are supported, up to 50 MB and 32 megapixels. The worker prepares a PNG and previews
+without a model call, then saves the image in the conversation. Describe a change and send,
+or use **Select area** for a region edit. The source remains in version history.
+
+Photos are oriented correctly and metadata is removed. Transparent areas are placed on
+white for the current RGB edit pipeline, with a notice. Region edits may expand your
+selection to a size the model accepts; pixels outside that expanded rectangle are preserved.
+Whole-image conversational edits regenerate the image and do not provide that guarantee.
+
+Uploads currently use local storage emulation. Direct cloud uploads and abandoned-upload
+cleanup are required before production deployment.
+
 The browser only ever talks to `:3000` — Next rewrites `/v1/*` and `/_blobs/*` to the API,
 which is the same single-origin shape Front Door gives in production. No CORS anywhere.
 
@@ -72,6 +95,23 @@ make dev
 
 Generations cost real money — roughly **$0.53 per 4K image** at current token rates. The
 `echo` default exists so nothing reaches a paid endpoint by accident.
+
+### Build a structured diagram
+
+Open **Structure** in the composer to define a title, key message, layout, components,
+connections, and annotations. Component names stay connected when renamed. **Preview
+prompt** shows the compiled instructions without calling a model. Add any final guidance
+in the composer, then send; a title alone is enough to submit a valid structure.
+
+Every structured generation keeps its own saved copy. **Use structure** in history opens
+that copy for reuse. Follow-up edits inherit it and retain earlier written instructions.
+**New image** forces a fresh generation; **Edit latest** uses the latest image in the
+conversation; **Auto** keeps conversational routing. Selecting an image explicitly sets
+it as the edit source. Rerun uses that job's model, size, count, source, region, and structure.
+
+The inspector supports export and version history on both desktop and mobile. Progress
+recovers through polling when the live connection drops; reopening an active conversation
+resumes tracking. The echo adapter verifies the workflow, not real-model visual quality.
 
 ### Configuration
 

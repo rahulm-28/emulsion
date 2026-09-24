@@ -100,3 +100,29 @@ class DiagramSpec:
     def orphan_callouts(self) -> list[Callout]:
         known = self.names()
         return [c for c in self.callouts if c.anchor and c.anchor not in known]
+
+
+def diagram_from_dict(data: dict) -> DiagramSpec:
+    """Rehydrate previously validated storage data without importing web or ORM types."""
+    return DiagramSpec(
+        title=data["title"],
+        key_message=data.get("key_message", ""),
+        layout=data.get("layout", ""),
+        legend=dict(data.get("legend", {})),
+        components=tuple(
+            Component(
+                **{
+                    **item,
+                    "items": tuple(item.get("items", [])),
+                    "emphasis": Emphasis(item.get("emphasis", "normal")),
+                }
+            )
+            for item in data.get("components", [])
+        ),
+        connections=tuple(
+            Connection(**{**item, "weight": Weight(item.get("weight", "primary"))})
+            for item in data.get("connections", [])
+        ),
+        callouts=tuple(Callout(**item) for item in data.get("callouts", [])),
+        consistency_with=data.get("consistency_with", ""),
+    )

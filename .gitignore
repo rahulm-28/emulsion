@@ -27,6 +27,7 @@ out/
 
 # local data — sqlite db and the filesystem blob store
 .data/
+.data-local/
 scratch/
 tmp/
 *.local

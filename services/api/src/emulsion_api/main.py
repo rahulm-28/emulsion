@@ -13,27 +13,45 @@ import json
 import logging
 import threading
 from collections.abc import AsyncIterator
+from datetime import UTC, timedelta
 from typing import Annotated
 
 from emulsion_db import HouseStyle as HouseStyleRow
-from emulsion_db import Image, Job, JobEvent, JobStatus, User, get_sessionmaker, utcnow
+from emulsion_db import (
+    Image,
+    ImageUpload,
+    Job,
+    JobEvent,
+    JobSpecification,
+    JobStatus,
+    QueueMessage,
+    User,
+    get_sessionmaker,
+    utcnow,
+)
 from emulsion_db import Session as DbSession
-from emulsion_engine import classify, extract_recurring
+from emulsion_engine import HouseStyle, classify, compile_prompt, extract_recurring
+from emulsion_engine.spec import diagram_from_dict
 from emulsion_imaging import export as imaging_export
+from emulsion_imaging.ingest import MAX_UPLOAD_BYTES
 from emulsion_platform import AuthError, Principal, identity_provider
 from emulsion_providers import SIZE_PRESETS, available_models, load_manifest
 from emulsion_worker import blob_store, bootstrap, queue, run_forever, settings
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query
+from emulsion_worker.imports import staging_path
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from . import quota
 from .schemas import (
     CreateJobRequest,
+    DiagramIn,
+    DiagramPreviewRequest,
     DroppedPartOut,
     ExportOut,
     ExportRequest,
@@ -209,6 +227,12 @@ def _latest_image_in(session: Session, chat_id: str, owner_id: str) -> Image | N
 def _job_out(job: Job) -> JobOut:
     return JobOut(
         id=job.id,
+        kind=job.kind,
+        diagram=(
+            DiagramIn.model_validate_json(job.specification.diagram_json)
+            if job.specification
+            else None
+        ),
         session_id=job.session_id,
         status=job.status,
         model_id=job.model_id,
@@ -241,7 +265,7 @@ def _session_out(session: DbSession) -> SessionOut:
         model_id=session.model_id,
         style_id=session.style_id,
         link_consistency=session.link_consistency,
-        job_count=len(session.jobs),
+        job_count=sum(job.kind != "upload" for job in session.jobs),
         image_count=len(images),
         cost_usd=round(sum(job.cost_usd or 0.0 for job in session.jobs), 6),
         thumbnail_url=(
@@ -314,6 +338,107 @@ def list_models() -> list[ModelOut]:
     return out
 
 
+class UploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    size_bytes: int = Field(gt=0, le=MAX_UPLOAD_BYTES)
+    session_id: str | None = None
+
+
+def _owned_upload(upload_id: str, session: Session, user: User) -> ImageUpload:
+    upload = session.get(ImageUpload, upload_id)
+    if upload is None or upload.owner_id != user.id:
+        raise HTTPException(404, "Upload not found.")
+    return upload
+
+
+def _check_upload_expiry(upload: ImageUpload) -> None:
+    expires = upload.expires_at.replace(tzinfo=UTC)
+    if expires <= utcnow():
+        raise HTTPException(410, "This upload expired. Please attach the image again.")
+
+
+@app.post("/v1/uploads", status_code=201)
+def create_upload(body: UploadRequest, session: SessionDep, user: UserDep) -> dict:
+    if body.session_id:
+        chat = session.get(DbSession, body.session_id)
+        if chat is None or chat.owner_id != user.id:
+            raise HTTPException(404, "Conversation not found.")
+    upload = ImageUpload(
+        owner_id=user.id,
+        session_id=body.session_id,
+        filename=body.filename,
+        size_bytes=body.size_bytes,
+        expires_at=utcnow() + timedelta(minutes=15),
+    )
+    session.add(upload)
+    session.commit()
+    session.refresh(upload)
+    # Local-only storage shim. Cloud storage must supply a direct signed PUT URL.
+    return {"id": upload.id, "upload_url": f"/_uploads/{upload.id}"}
+
+
+@app.put("/_uploads/{upload_id}", status_code=204)
+async def put_local_upload(
+    upload_id: str,
+    request: Request,
+    session: SessionDep,
+    user: UserDep,
+) -> None:
+    """Local storage emulation, like /_blobs. Not a production byte-proxy route."""
+    from .upload_storage import receive
+
+    upload = _owned_upload(upload_id, session, user)
+    _check_upload_expiry(upload)
+    if upload.received or upload.job_id:
+        raise HTTPException(409, "This upload has already been received.")
+    await receive(request, staging_path(upload.id), upload.size_bytes)
+    upload.received = True
+    session.commit()
+
+
+@app.post("/v1/uploads/{upload_id}/complete", response_model=JobOut, status_code=202)
+def complete_upload(upload_id: str, session: SessionDep, user: UserDep) -> JobOut:
+    upload = _owned_upload(upload_id, session, user)
+    if upload.job_id:
+        return _job_out(session.get(Job, upload.job_id))
+    _check_upload_expiry(upload)
+    if not upload.received:
+        raise HTTPException(409, "The image has not finished uploading.")
+    chat = session.get(DbSession, upload.session_id) if upload.session_id else None
+    if upload.session_id and (chat is None or chat.owner_id != user.id):
+        raise HTTPException(404, "Conversation not found.")
+    if chat is None:
+        chat = DbSession(owner_id=user.id, title=_title_from(upload.filename))
+        session.add(chat)
+        session.flush()
+    chat.updated_at = utcnow()
+    job = Job(
+        owner_id=user.id,
+        session_id=chat.id,
+        kind="upload",
+        model_id="upload",
+        prompt=upload.filename,
+        size="original",
+        n=1,
+    )
+    session.add(job)
+    session.flush()
+    claimed = session.execute(
+        update(ImageUpload)
+        .where(ImageUpload.id == upload.id, ImageUpload.job_id.is_(None))
+        .values(job_id=job.id)
+    )
+    if claimed.rowcount != 1:
+        session.rollback()
+        upload = _owned_upload(upload_id, session, user)
+        return _job_out(session.get(Job, upload.job_id))
+    # Atomic with the job: completion cannot leave an accepted import unqueued.
+    session.add(QueueMessage(body=json.dumps({"job_id": job.id})))
+    session.commit()
+    session.refresh(job)
+    return _job_out(job)
+
+
 @app.post("/v1/jobs", response_model=JobOut, status_code=202)
 def create_job(
     body: CreateJobRequest,
@@ -338,6 +463,15 @@ def create_job(
         if parent is None or parent.owner_id != user.id:
             raise HTTPException(404, f"unknown parent image {body.parent_image_id!r}")
 
+    if idempotency_key:
+        existing = session.execute(
+            select(Job).where(Job.idempotency_key == idempotency_key, Job.owner_id == user.id)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _job_out(existing)
+    if body.style_id:
+        _owned_style(body.style_id, session, user)
+
     # ponytail: the quota check runs and currently always passes. It is here so M8 is a
     # policy change rather than a hunt for every place a job is created.
     decision = quota.check(user)
@@ -355,26 +489,31 @@ def create_job(
     else:
         chat.updated_at = utcnow()
         chat.model_id = body.model_id
-
-    if idempotency_key:
-        existing = session.execute(
-            select(Job).where(Job.idempotency_key == idempotency_key, Job.owner_id == user.id)
-        ).scalar_one_or_none()
-        if existing is not None:
-            return _job_out(existing)
+    if "style_id" in body.model_fields_set:
+        chat.style_id = body.style_id or None
+    if body.link_consistency is not None:
+        chat.link_consistency = body.link_consistency
 
     # Conversational edit: "make the title bigger" with a picture already on screen is
     # a change to that picture, not a new one. Only inferred when the caller did not
     # say — an explicit parent_image_id or a drawn region is a decision already made.
     routing: str | None = None
     parent_image_id = body.parent_image_id
-    if parent_image_id is None and body.region is None:
+    if parent_image_id is None and body.region is None and body.mode != "generate":
         previous = _latest_image_in(session, chat.id, user.id)
         if previous is not None:
             intent = classify(body.prompt, has_previous_image=True)
-            if intent.is_edit:
+            if body.mode == "edit" or intent.is_edit:
                 parent_image_id = previous.id
                 routing = f"editing your previous image — {intent.reason}"
+        elif body.mode == "edit":
+            raise HTTPException(422, "Attach or generate an image before choosing Edit latest.")
+
+    diagram = body.diagram
+    if diagram is None and parent_image_id:
+        parent = session.get(Image, parent_image_id)
+        if parent.job and parent.job.specification:
+            diagram = DiagramIn.model_validate_json(parent.job.specification.diagram_json)
 
     job = Job(
         idempotency_key=idempotency_key,
@@ -386,6 +525,7 @@ def create_job(
             else None
         ),
         status=JobStatus.QUEUED,
+        kind="edit" if parent_image_id else "generate",
         model_id=body.model_id,
         prompt=body.prompt,
         size=body.size,
@@ -393,7 +533,13 @@ def create_job(
         parent_image_id=parent_image_id,
     )
     session.add(job)
+    if diagram is not None:
+        job.specification = JobSpecification(diagram_json=diagram.model_dump_json())
     try:
+        session.flush()
+        if routing is not None:
+            session.add(JobEvent(job_id=job.id, seq=0, kind="status", message=routing))
+        session.add(QueueMessage(body=json.dumps({"job_id": job.id})))
         session.commit()
     except IntegrityError:
         # Invariant 8: the unique index is the real guard. Two concurrent submits with
@@ -408,14 +554,38 @@ def create_job(
         return _job_out(existing)
 
     session.refresh(job)
-    if routing is not None:
-        # Seq 0, before the worker writes anything: the routing decision is the first
-        # thing that happened to this job, and the person must be able to see that it
-        # was made and disagree with it.
-        session.add(JobEvent(job_id=job.id, seq=0, kind="status", message=routing))
-        session.commit()
-    queue().enqueue({"job_id": job.id})
     return _job_out(job)
+
+
+def _owned_style(style_id: str, session: Session, user: User) -> HouseStyleRow:
+    row = session.get(HouseStyleRow, style_id)
+    if row is None or row.owner_id != user.id:
+        raise HTTPException(404, "Style not found.")
+    return row
+
+
+@app.post("/v1/diagrams/preview")
+def preview_diagram(body: DiagramPreviewRequest, session: SessionDep, user: UserDep) -> dict:
+    """Deterministic compilation only. Previewing never enqueues work or calls a model."""
+    if body.model_id not in available_models():
+        raise HTTPException(404, "Model not found.")
+    style = None
+    if body.style_id:
+        row = _owned_style(body.style_id, session, user)
+        style = HouseStyle(
+            name=row.name,
+            legend=json.loads(row.legend_json),
+            rules=tuple(json.loads(row.rules_json)),
+            layout=row.layout,
+            style_words=tuple(json.loads(row.style_words_json)),
+        )
+    compiled = compile_prompt(
+        body.prompt,
+        load_manifest(body.model_id),
+        spec=diagram_from_dict(body.diagram.model_dump()),
+        style=style,
+    )
+    return {"text": compiled.text, "warnings": list(compiled.warnings)}
 
 
 @app.get("/v1/styles", response_model=list[StyleOut])
@@ -490,7 +660,7 @@ def style_suggestions(
     prompts = (
         session.execute(
             select(Job.prompt)
-            .where(Job.owner_id == user.id)
+            .where(Job.owner_id == user.id, Job.kind != "upload")
             .order_by(Job.created_at.desc())
             .limit(400)
         )

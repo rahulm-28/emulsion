@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowUp, Copy, Layers, Square, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { ArrowUp, GitBranch, ImagePlus, Layers, Square, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { ImageOut, ModelOut, Region } from "@/lib/api";
 import { RegionPicker } from "@/components/RegionPicker";
 import { StylePanel } from "@/components/StylePanel";
@@ -47,8 +47,18 @@ interface Props {
   onStyle: (styleId: string | null) => void;
   onLinkConsistency: (value: boolean) => void;
   busy: boolean;
+  uploading: boolean;
+  onUpload: (file: File) => void;
+  onUploadError: (message: string) => void;
   onSubmit: () => void;
   onStop: () => void;
+  diagramTitle: string | null;
+  structureInvalid: boolean;
+  structureOpen: boolean;
+  onStructure: () => void;
+  mode: "auto" | "generate" | "edit";
+  onMode: (value: "auto" | "generate" | "edit") => void;
+  hasImages: boolean;
 }
 
 export function Composer({
@@ -70,12 +80,38 @@ export function Composer({
   onStyle,
   onLinkConsistency,
   busy,
+  uploading,
+  onUpload,
+  onUploadError,
   onSubmit,
   onStop,
+  diagramTitle, structureInvalid, structureOpen, onStructure, mode, onMode, hasImages,
 }: Props) {
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
   const model = models.find((m) => m.id === modelId);
-  const canSend = prompt.trim().length > 0 && !busy;
+  const canSend = !!(prompt.trim() || diagramTitle?.trim()) && !structureInvalid && !busy && !uploading;
+
+  function attach(files: File[]) {
+    if (busy || uploading) return;
+    if (files.length !== 1) {
+      onUploadError("Attach one image at a time.");
+      return;
+    }
+    const file = files[0];
+    if (!/\.(png|jpe?g|webp)$/i.test(file.name) &&
+        !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      onUploadError("Choose a PNG, JPEG, or WebP image.");
+      return;
+    }
+    if (!file.size || file.size > 50 * 1024 * 1024) {
+      onUploadError("Choose an image up to 50 MB.");
+      return;
+    }
+    onUpload(file);
+  }
 
   useEffect(() => {
     const el = textarea.current;
@@ -107,7 +143,57 @@ export function Composer({
 
   return (
     <div className="px-4 pb-4 pt-2">
-      <div className="mx-auto w-full max-w-3xl">
+      <div
+        className="relative mx-auto w-full max-w-3xl"
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          if (!busy && !uploading) setDragging(true);
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = busy || uploading ? "none" : "copy";
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (!dragDepth.current) setDragging(false);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          attach(Array.from(event.dataTransfer.files));
+        }}
+      >
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="sr-only"
+          tabIndex={-1}
+          aria-label="Choose image to edit"
+          disabled={busy || uploading}
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            if (files.length) attach(files);
+          }}
+        />
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl border border-accent-fill bg-card text-sm text-foreground">
+            <Upload className="size-5 text-accent" />
+            Drop an image to edit
+            <span className="text-xs text-muted-foreground">PNG, JPEG or WebP · up to 50 MB</span>
+          </div>
+        )}
+        {uploading && (
+          <p role="status" className="mb-2 px-2 text-xs text-muted-foreground">
+            Preparing your image… You can keep writing your changes.
+          </p>
+        )}
         {parent && (
           <div className="mx-2 mb-[-10px] flex items-center gap-2.5 rounded-t-xl border border-b-0 border-border bg-background-subtle px-3 pb-4 pt-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -119,8 +205,8 @@ export function Composer({
               </p>
               <p className="truncate text-[11px] text-subtle-foreground">
                 {region
-                  ? `Editing a ${region.right - region.left}×${region.bottom - region.top} area — everything else stays untouched`
-                  : parent.prompt}
+                  ? `Selected ${region.right - region.left}×${region.bottom - region.top}. The edit area may expand to fit the model.`
+                  : parent.prompt || `Uploaded image · ${parent.width}×${parent.height}`}
               </p>
             </div>
             <RegionPicker image={parent} value={region} onChange={onRegion} />
@@ -136,6 +222,13 @@ export function Composer({
             </Tooltip>
           </div>
         )}
+
+        {diagramTitle !== null && <button type="button" onClick={onStructure}
+          className="mb-2 flex max-w-full cursor-pointer items-center gap-2 px-2 py-1 text-xs text-accent">
+          <GitBranch className="size-3.5 shrink-0" />
+          <span className="truncate">{diagramTitle || "Untitled structure"}</span>
+          {structureInvalid && <span className="shrink-0 text-danger">Needs attention</span>}
+        </button>}
 
         <form
           onSubmit={(e) => {
@@ -153,6 +246,13 @@ export function Composer({
             rows={1}
             value={prompt}
             onChange={(e) => onPrompt(e.target.value)}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.files);
+              if (files.length) {
+                event.preventDefault();
+                attach(files);
+              }
+            }}
             onKeyDown={(e) => {
               // Enter sends, Shift+Enter is a newline — what every chat surface does.
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -167,10 +267,22 @@ export function Composer({
                   ? "Describe the change…"
                   : "Describe the image you want…"
             }
-            className="block max-h-[320px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-subtle-foreground"
+            className="block max-h-[320px] w-full resize-none bg-transparent pb-2 pl-4 pr-14 pt-3.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-subtle-foreground sm:pr-4"
           />
 
-          <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pb-2.5">
+            <Tooltip label="Attach image">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Attach image"
+                disabled={busy || uploading}
+                onClick={() => fileInput.current?.click()}
+              >
+                <ImagePlus />
+              </Button>
+            </Tooltip>
             <Select value={modelId} onValueChange={onModel}>
               <SelectTrigger aria-label="Model" className="max-w-[10rem]">
                 <SelectValue />
@@ -221,6 +333,18 @@ export function Composer({
               </SelectContent>
             </Select>
 
+            <Button type="button" variant="ghost" size="sm" aria-pressed={structureOpen}
+              disabled={busy || uploading} onClick={onStructure}><GitBranch />Structure</Button>
+
+            <Select value={mode} onValueChange={(value) => onMode(value as typeof mode)} disabled={busy || uploading}>
+              <SelectTrigger aria-label="Generation mode"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto</SelectItem>
+                <SelectItem value="generate">New image</SelectItem>
+                <SelectItem value="edit" disabled={!hasImages && !parent}>{parent ? "Edit selected" : "Edit latest"}</SelectItem>
+              </SelectContent>
+            </Select>
+
             <StylePanel
               activeStyleId={styleId}
               linkConsistency={linkConsistency}
@@ -229,15 +353,15 @@ export function Composer({
               onLinkConsistency={onLinkConsistency}
             />
 
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5 sm:static sm:ml-auto">
               {busy ? (
-                <Tooltip label="Stop generating">
+                <Tooltip label="Stop watching progress">
                   <Button
                     type="button"
                     variant="secondary"
                     size="icon"
                     onClick={onStop}
-                    aria-label="Stop generating"
+                    aria-label="Stop watching progress"
                     className="rounded-full"
                   >
                     <Square className="fill-current" />
@@ -278,15 +402,8 @@ export function Composer({
             </kbd>
             focus
           </span>
-          {model && (
-            <>
-              <span aria-hidden>·</span>
-              <span className="inline-flex items-center gap-1">
-                <Copy className="size-3" />
-                every call is an async job
-              </span>
-            </>
-          )}
+          <span aria-hidden>·</span>
+          <span>Drop or paste an image to edit</span>
         </p>
       </div>
     </div>

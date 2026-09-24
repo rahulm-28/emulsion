@@ -62,7 +62,7 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
   return (
     <aside
       aria-label="Image inspector"
-      className="flex w-full shrink-0 flex-col border-l border-border bg-background-subtle lg:w-[322px]"
+      className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-border bg-background-subtle lg:w-[322px]"
     >
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
         <h2 className="text-[13px] font-medium text-foreground">Inspector</h2>
@@ -81,7 +81,7 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={image.viewer_url}
-              alt={image.prompt}
+              alt={image.prompt || "Uploaded source image"}
               className="w-full"
               style={{ aspectRatio: `${image.width} / ${image.height}` }}
             />
@@ -93,19 +93,19 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
           </Button>
 
           <Section title="Export">
-            <ExportPanel image={image} />
+            <ExportPanel key={image.id} image={image} />
           </Section>
 
           <Section title="Output">
             <dl>
               <Row label="Dimensions" value={`${image.width}×${image.height}`} />
               <Row label="File size" value={formatBytes(image.size_bytes)} />
-              <Row label="Model" value={image.model_id} />
+              <Row label={image.model_id === "upload" ? "Source" : "Model"} value={image.model_id === "upload" ? "Uploaded image" : image.model_id} />
               {job && <Row label="Preset" value={job.size} />}
             </dl>
           </Section>
 
-          {job && (
+          {job && job.kind !== "upload" && (
             <Section title="Accounting">
               <dl>
                 <Row label="Tokens in" value={job.input_tokens?.toLocaleString() ?? "—"} />
@@ -185,7 +185,7 @@ export function Inspector({ image, job, model, open, onClose, onSelect, onEdit }
             </Section>
           )}
 
-          {model && (
+          {model && image.model_id !== "upload" && (
             <Section title="Model capabilities">
               <dl>
                 <Row label="Provider" value={model.provider} />

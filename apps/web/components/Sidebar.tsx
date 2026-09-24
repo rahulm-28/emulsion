@@ -80,7 +80,7 @@ export function Sidebar({
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-[20] flex w-[278px] shrink-0 flex-col border-r border-border bg-background-subtle transition-transform duration-200 lg:static lg:translate-x-0",
-          open ? "translate-x-0" : "-translate-x-full",
+          open ? "visible translate-x-0" : "invisible -translate-x-full lg:visible",
         )}
       >
         <div className="flex h-14 items-center justify-between px-4">

@@ -169,6 +169,22 @@ class Job(Base):
         cascade="all, delete-orphan",
         foreign_keys="Image.job_id",
     )
+    specification: Mapped[JobSpecification | None] = relationship(
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
+
+
+class JobSpecification(Base):
+    """An immutable diagram snapshot. Additive so existing local databases still open."""
+
+    __tablename__ = "job_specifications"
+
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    diagram_json: Mapped[str] = mapped_column(Text)
 
 
 class JobEvent(Base):
@@ -236,3 +252,18 @@ class QueueMessage(Base):
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ImageUpload(Base):
+    """An expiring, owner-bound staging object. One completed upload creates one job."""
+
+    __tablename__ = "image_uploads"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"))
+    filename: Mapped[str] = mapped_column(String(200))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received: Mapped[bool] = mapped_column(Boolean, default=False)
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))

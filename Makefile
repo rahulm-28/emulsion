@@ -1,4 +1,4 @@
-.PHONY: install dev api worker web test lint fmt check clean
+.PHONY: install dev dev-local api worker web test lint fmt check clean
 
 # Machine-local settings — EMULSION_AUTH, CLERK_*, AZURE_*. Absent by default, and
 # absent means single-user local mode. The API reads os.environ directly, so without
@@ -18,6 +18,13 @@ dev:
 	@echo "Web  → http://127.0.0.1:3000"
 	@echo
 	@$(MAKE) -j2 api web
+
+# A deliberately isolated free demo, even with real credentials in .env/local.mk.
+dev-local:
+	mkdir -p .data-local
+	$(MAKE) dev EMULSION_AUTH=dev EMULSION_ADAPTER=echo EMULSION_INLINE_WORKER=1 \
+		EMULSION_DATA_DIR=.data-local DATABASE_URL=sqlite:///.data-local/emulsion.db \
+		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 
 api:
 	uv run uvicorn emulsion_api:app --host 127.0.0.1 --port 8000 --reload

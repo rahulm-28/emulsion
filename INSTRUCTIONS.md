@@ -28,8 +28,10 @@ CLAUDE.md                  agent instructions + architecture guardrails
 .claude/commands/          slash commands
 ```
 
-Nothing else exists yet — no application code. That's intentional; modules create their own
-directories when they need them.
+A working local application exists in `apps/web`, `services/api`, and `services/worker`,
+with shared Python libraries under `packages/`. Run `make install` followed by
+`make dev-local` for an isolated free demo, or `make dev` to use your configured services.
+The README describes image uploads, structured diagrams, and editing; CLAUDE.md tracks the remaining module work.
 
 ---
 
@@ -92,25 +94,15 @@ verify before the next one starts.
 
 ---
 
-## Immediately useful: the M1 open items
+## Provider findings and remaining work
 
-M1 can't write an accurate capability manifest until four things are measured against your
-actual Foundry deployment. Roughly 30 minutes with the existing CLI:
+August 12 and 16 probes established that `input_fidelity` and `seed` are rejected, masks
+are only soft hints, and the v1 endpoint must omit `api-version`. The capability manifest
+records evidence and confidence. Token usage was measured; dollar pricing remains inferred.
 
-1. Is `input_fidelity` accepted on `gpt-image-2` `/images/edits`? Prior attempts were
-   rejected — was that the model or the `api-version`?
-2. Is `mask` accepted at all on that deployment?
-3. Confirm the api-version divergence (`2024-02-01` works for generations, 404s on edits;
-   `2025-04-01-preview` works for edits).
-4. Real cost per image at 4K, to seed the manifest's `cost_model`.
-
-Run them with:
-
-```
-/probe-foundry
-```
-
-Results land in the M1 spec instead of being guessed at.
+M1 still needs its module specification, managed identity, and BYOK. The complete app
+pipeline also needs a real-model smoke run. Azure provisioning remains under the user's
+control; local feature development and offline checks need none of it.
 
 ---
 

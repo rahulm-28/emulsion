@@ -16,6 +16,7 @@ from dataclasses import replace
 from emulsion_db import HouseStyle as HouseStyleRow
 from emulsion_db import Image, Job, JobEvent, JobStatus, new_id, session_scope, utcnow
 from emulsion_engine import HouseStyle, JobSpec, refine, run
+from emulsion_engine.spec import diagram_from_dict
 from emulsion_imaging import build_pyramid, rank_diagrams, score_diagram, to_array, to_png
 from emulsion_providers import cost_usd, load_manifest
 from emulsion_providers.adapters import get_adapter
@@ -135,10 +136,12 @@ def process_job(job_id: str) -> None:
             return
         job.status = JobStatus.RUNNING
         job.started_at = utcnow()
+        is_upload = job.kind == "upload"
         region = parse_region(job.region)
         parent_key = next(iter(_parent_blob_keys(session, job)), None)
         prompt = job.prompt
-        if parent_key is not None and region is None:
+        lineage_prompt = prompt
+        if parent_key is not None:
             # A conversational edit. The model regenerates the whole image on every
             # edit call, so sending only "make the title bigger" re-rolls everything
             # that was already right against a prompt that no longer describes the
@@ -146,18 +149,30 @@ def process_job(job_id: str) -> None:
             # picture that happens to have a bigger title.
             parent = session.get(Image, job.parent_image_id) if job.parent_image_id else None
             if parent is not None and parent.prompt:
-                prompt = refine(parent.prompt, job.prompt)
+                lineage_prompt = refine(parent.prompt, job.prompt)
+                if region is None:
+                    prompt = lineage_prompt
         spec = JobSpec(
             prompt=prompt,
             model_id=job.model_id,
             size=job.size,
             n=job.n,
+            diagram=(
+                diagram_from_dict(json.loads(job.specification.diagram_json))
+                if job.specification and region is None
+                else None
+            ),
             source_blob_ids=[parent_key] if parent_key else [],
             style=_house_style(session, job),
             consistency_with=_previous_title(session, job),
         )
 
     emit(job_id, "status", "running")
+    if is_upload:
+        from .imports import process_import
+
+        process_import(job_id)
+        return
     progress = lambda message: emit(job_id, "progress", message)  # noqa: E731
 
     parent_array = None
@@ -227,7 +242,7 @@ def process_job(job_id: str) -> None:
                 content_type=content_type,
                 width=width,
                 height=height,
-                prompt=job.prompt,
+                prompt=lineage_prompt,
                 model_id=spec.model_id,
             )
         job.input_tokens = result.input_tokens
@@ -276,7 +291,11 @@ def _previous_title(session, job: Job) -> str:  # noqa: ANN001
     chat = job.session
     if chat is None or not chat.link_consistency:
         return ""
-    earlier = [j for j in chat.jobs if j.id != job.id and j.status == JobStatus.SUCCEEDED]
+    earlier = [
+        j
+        for j in chat.jobs
+        if j.id != job.id and j.kind != "upload" and j.status == JobStatus.SUCCEEDED
+    ]
     return earlier[-1].prompt[:80] if earlier else ""
 
 

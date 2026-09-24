@@ -4,12 +4,15 @@ import { PanelLeft, PanelRight } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { Composer } from "@/components/Composer";
+import { DiagramEditor } from "@/components/DiagramEditor";
 import { Inspector } from "@/components/Inspector";
 import { LogoMark } from "@/components/Logo";
 import { Sidebar } from "@/components/Sidebar";
 import { Thread } from "@/components/Thread";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip } from "@/components/ui/tooltip";
+import { diagramIssues, emptyDiagram, type DiagramSpec } from "@/lib/diagram";
 import {
   createJob,
   deleteSession,
@@ -21,6 +24,8 @@ import {
   patchSession,
   renameSession,
   streamJob,
+  uploadImage,
+  type CreateJobBody,
   type HealthOut,
   type ImageOut,
   type JobOut,
@@ -61,6 +66,7 @@ function Studio() {
   const [sessions, setSessions] = useState<SessionOut[]>([]);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionReload, setSessionReload] = useState(0);
   const [jobs, setJobs] = useState<JobOut[]>([]);
 
   const [prompt, setPrompt] = useState("");
@@ -69,12 +75,17 @@ function Studio() {
   const [count, setCount] = useState(1);
   const [parent, setParent] = useState<ImageOut | null>(null);
   const [region, setRegion] = useState<Region | null>(null);
+  const [diagram, setDiagram] = useState<DiagramSpec | null>(null);
+  const [structureOpen, setStructureOpen] = useState(false);
+  const [mode, setMode] = useState<"auto" | "generate" | "edit">("auto");
+  const [desktop, setDesktop] = useState(false);
   // A style can be chosen before the conversation exists; it is applied to the session
   // the moment one is created.
   const [pendingStyleId, setPendingStyleId] = useState<string | null>(null);
   const [pendingLink, setPendingLink] = useState(false);
 
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ImageOut | null>(null);
 
@@ -82,6 +93,9 @@ function Studio() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
   const unsubscribe = useRef<null | (() => void)>(null);
+  const uploadController = useRef<AbortController | null>(null);
+  const conversationEpoch = useRef(0);
+  const submitting = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const model = models.find((m) => m.id === modelId) ?? null;
@@ -93,6 +107,14 @@ function Studio() {
   }, []);
 
   useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const update = () => setDesktop(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
     listModels()
       .then((found) => {
         setModels(found);
@@ -101,7 +123,10 @@ function Studio() {
       .catch((e) => setError(String(e)));
     getHealth().then(setHealth).catch(() => undefined);
     refreshSessions().catch((e) => setError(String(e)));
-    return () => unsubscribe.current?.();
+    return () => {
+      unsubscribe.current?.();
+      uploadController.current?.abort();
+    };
   }, [refreshSessions]);
 
   useEffect(() => {
@@ -113,16 +138,28 @@ function Studio() {
     listSessionJobs(sessionId)
       .then((found) => {
         if (!live) return;
-        setJobs(found);
+        setJobs((current) => {
+          const merged = found.map((job) => {
+            const local = current.find((item) => item.id === job.id);
+            return local && (local.status === "succeeded" || local.status === "failed") ? local : job;
+          });
+          return [...merged, ...current.filter((job) => job.session_id === sessionId && !found.some((item) => item.id === job.id))];
+        });
         setSelected(found.at(-1)?.images.at(-1) ?? null);
         setPendingStyleId(null);
         setPendingLink(false);
+        const running = [...found].reverse().find((job) => job.status === "queued" || job.status === "running");
+        if (running) {
+          setUploading(running.kind === "upload");
+          setBusy(running.kind !== "upload");
+          watchJob(running);
+        }
       })
-      .catch(() => live && setJobs([]));
+      .catch(() => live && setError("Could not load this conversation. Try opening it again."));
     return () => {
       live = false;
     };
-  }, [sessionId]);
+  }, [sessionId, sessionReload]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -138,70 +175,135 @@ function Studio() {
     });
   }
 
-  async function submit() {
-    if (!prompt.trim() || busy) return;
-    setPrompt("");
-    await submitText(prompt.trim(), size, count);
+  function watchJob(created: JobOut) {
+    const epoch = conversationEpoch.current;
+    unsubscribe.current?.();
+    unsubscribe.current = streamJob(created.id, {
+      onMessage: (kind, message, seq) => {
+        if (epoch !== conversationEpoch.current) return;
+        setJobs((previous) => previous.map((job) => job.id !== created.id ? job : {
+          ...job,
+          status: kind === "error" ? "failed" : message === "queued" ? "queued" : "running",
+          events: [...job.events, {
+            seq, kind, message, created_at: new Date().toISOString(),
+          }],
+        }));
+      },
+      onSnapshot: (job) => { if (epoch === conversationEpoch.current) upsertJob(job); },
+      onDone: (finished) => {
+        if (epoch !== conversationEpoch.current) return;
+        upsertJob(finished);
+        setBusy(false);
+        setUploading(false);
+        if (finished.status === "failed") setError(finished.error ?? "Could not finish this request.");
+        const image = finished.images.at(0);
+        if (image) {
+          setSelected(image);
+          if (finished.kind === "upload") {
+            setParent(image);
+            setRegion(null);
+            setMode("edit");
+          }
+        }
+        refreshSessions().catch(() => undefined);
+        getHealth().then(setHealth).catch(() => undefined);
+      },
+      onError: (message) => {
+        if (epoch !== conversationEpoch.current) return;
+        setError(message);
+        setBusy(false);
+        setUploading(false);
+      },
+    }, created.events.at(-1)?.seq ?? -1);
   }
 
-  async function submitText(text: string, useSize: string, useCount: number) {
-    if (!text.trim() || busy) return;
+  async function attachImage(file: File) {
+    if (busy || uploading) return;
+    const epoch = conversationEpoch.current;
+    const controller = new AbortController();
+    uploadController.current?.abort();
+    uploadController.current = controller;
+    setUploading(true);
+    setError(null);
+    try {
+      const created = await uploadImage(file, sessionId, controller.signal);
+      if (epoch !== conversationEpoch.current) return;
+      setSessionId(created.session_id);
+      upsertJob(created);
+      if (!sessionId && created.session_id && (pendingStyleId || pendingLink)) {
+        await patchSession(created.session_id, {
+          style_id: pendingStyleId ?? "", link_consistency: pendingLink,
+        });
+      }
+      if (epoch !== conversationEpoch.current) return;
+      refreshSessions().catch(() => undefined);
+      watchJob(created);
+    } catch (error) {
+      if (epoch !== conversationEpoch.current || controller.signal.aborted) return;
+      setError(error instanceof Error ? error.message : "Could not upload this image.");
+      setUploading(false);
+    }
+  }
+
+  function leaveConversation() {
+    conversationEpoch.current += 1;
+    uploadController.current?.abort();
+    unsubscribe.current?.();
+    setUploading(false);
+    setBusy(false);
+    setParent(null);
+    setRegion(null);
+    setDiagram(null);
+    setStructureOpen(false);
+    setMode("auto");
+    setPrompt("");
+    setInspectorOpen(false);
+    setError(null);
+  }
+
+  async function submit() {
+    const text = prompt.trim() || diagram?.title.trim() || "";
+    if (!text || (diagram && diagramIssues(diagram).length)) return;
+    await submitBody({
+      prompt: text, model_id: modelId, size, n: count,
+      parent_image_id: parent?.id ?? null, region: parent ? region : null,
+      session_id: sessionId, diagram, mode: parent ? "edit" : mode,
+      style_id: activeSession?.style_id ?? pendingStyleId,
+      link_consistency: activeSession?.link_consistency ?? pendingLink,
+    });
+  }
+
+  async function submitBody(body: CreateJobBody) {
+    if (busy || uploading || submitting.current) return;
+    submitting.current = true;
+    const epoch = conversationEpoch.current;
     unsubscribe.current?.();
     setBusy(true);
     setError(null);
 
     try {
-      const created = await createJob({
-        prompt: text,
-        model_id: modelId,
-        size: useSize,
-        n: useCount,
-        parent_image_id: parent?.id ?? null,
-        region: parent ? region : null,
-        session_id: sessionId,
-      });
+      const created = await createJob(body);
 
+      if (epoch !== conversationEpoch.current) return;
       setSessionId(created.session_id);
       upsertJob(created);
       setPrompt("");
       setParent(null);
       setRegion(null);
-      if (!sessionId && created.session_id && (pendingStyleId || pendingLink)) {
-        await patchSession(created.session_id, {
-          style_id: pendingStyleId ?? "",
-          link_consistency: pendingLink,
-        });
-      }
+      setDiagram(null);
+      setStructureOpen(false);
+      setMode("auto");
       refreshSessions().catch(() => undefined);
 
-      unsubscribe.current = streamJob(created.id, {
-        onMessage: (kind, message) =>
-          upsertJob({
-            ...created,
-            status: kind === "error" ? "failed" : "running",
-            events: [
-              ...(created.events ?? []),
-              { seq: Date.now(), kind, message, created_at: new Date().toISOString() },
-            ],
-          }),
-        onDone: (finished) => {
-          upsertJob(finished);
-          setBusy(false);
-          if (finished.status === "failed") setError(finished.error ?? "job failed");
-          const image = finished.images.at(0);
-          if (image) setSelected(image);
-          refreshSessions().catch(() => undefined);
-          getHealth().then(setHealth).catch(() => undefined);
-        },
-        onError: (message) => {
-          setError(message);
-          setBusy(false);
-        },
-      });
+      if (epoch !== conversationEpoch.current) return;
+      watchJob(created);
     } catch (e) {
+      if (epoch !== conversationEpoch.current) return;
       setError(e instanceof Error ? e.message : String(e));
-      setPrompt(text);
+      setPrompt(body.prompt);
       setBusy(false);
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -211,12 +313,15 @@ function Studio() {
    * re-read once rather than abandoned.
    */
   function stopWatching() {
+    const epoch = conversationEpoch.current;
     unsubscribe.current?.();
     unsubscribe.current = null;
     setBusy(false);
     const running = jobs.at(-1);
     if (running) {
-      getJob(running.id).then(upsertJob).catch(() => undefined);
+      getJob(running.id).then((job) => {
+        if (epoch === conversationEpoch.current) upsertJob(job);
+      }).catch(() => undefined);
     }
   }
 
@@ -226,17 +331,24 @@ function Studio() {
    * original job and look like nothing happened.
    */
   function rerun(job: JobOut) {
-    if (busy) return;
-    setPrompt(job.prompt);
-    setSize(job.size);
-    setCount(job.n);
-    setParent(null);
+    void submitBody({
+      prompt: job.prompt, model_id: job.model_id, size: job.size, n: job.n,
+      parent_image_id: job.parent_image_id, region: job.region, diagram: job.diagram,
+      session_id: job.session_id, mode: job.parent_image_id ? "edit" : "generate",
+    });
+  }
+
+  function editImage(image: ImageOut) {
+    setParent(image);
+    setSelected(image);
     setRegion(null);
-    window.setTimeout(() => submitText(job.prompt, job.size, job.n), 0);
+    setMode("edit");
+    setStructureOpen(false);
+    if (!desktop) setInspectorOpen(false);
   }
 
   function startNew() {
-    unsubscribe.current?.();
+    leaveConversation();
     setSessionId(null);
     setJobs([]);
     setSelected(null);
@@ -281,7 +393,9 @@ function Studio() {
         open={navOpen}
         onClose={() => setNavOpen(false)}
         onSelect={(id) => {
+          leaveConversation();
           setSessionId(id);
+          setSessionReload((value) => value + 1);
           setNavOpen(false);
         }}
         onNew={startNew}
@@ -328,7 +442,12 @@ function Studio() {
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {jobs.length === 0 ? (
+          {structureOpen && diagram ? (
+            <DiagramEditor diagram={diagram} onChange={setDiagram}
+              onClose={() => setStructureOpen(false)}
+              onRemove={() => { setDiagram(null); setStructureOpen(false); }}
+              prompt={prompt} modelId={modelId} styleId={activeSession?.style_id ?? pendingStyleId} />
+          ) : jobs.length === 0 ? (
             <EmptyState onPick={setPrompt} />
           ) : (
             <Thread
@@ -338,12 +457,19 @@ function Studio() {
                 setSelected(image);
                 setInspectorOpen(true);
               }}
-              onEdit={(image) => {
-                setParent(image);
-                setSelected(image);
-                setRegion(null);
-              }}
+              onEdit={editImage}
               onRerun={rerun}
+              onUseDiagram={(job) => {
+                setDiagram(structuredClone(job.diagram));
+                setPrompt(job.prompt);
+                setModelId(job.model_id);
+                setSize(job.size);
+                setCount(job.n);
+                setParent(null);
+                setRegion(null);
+                setMode("generate");
+                setStructureOpen(true);
+              }}
             />
           )}
           <div ref={bottom} />
@@ -372,6 +498,7 @@ function Studio() {
           onClearParent={() => {
             setParent(null);
             setRegion(null);
+            setMode("generate");
           }}
           region={region}
           onRegion={setRegion}
@@ -380,25 +507,43 @@ function Studio() {
           onStyle={applyStyle}
           onLinkConsistency={applyLinkConsistency}
           busy={busy}
+          uploading={uploading}
+          onUpload={attachImage}
+          onUploadError={setError}
+          diagramTitle={diagram?.title ?? null}
+          structureInvalid={!!diagram && diagramIssues(diagram).length > 0}
+          structureOpen={structureOpen}
+          onStructure={() => { if (!diagram) setDiagram(emptyDiagram()); setStructureOpen(!structureOpen); }}
+          mode={mode}
+          onMode={(value) => {
+            setMode(value);
+            if (value !== "edit") { setParent(null); setRegion(null); }
+          }}
+          hasImages={jobs.some((job) => job.images.length > 0)}
           onSubmit={submit}
           onStop={stopWatching}
         />
       </main>
 
-      <div className="hidden lg:block">
+      {desktop ? <div className="h-full">
         <Inspector
           image={selected}
           job={selectedJob}
-          model={model}
+          model={models.find((item) => item.id === selected?.model_id) ?? model}
           open={inspectorOpen}
           onClose={() => setInspectorOpen(false)}
           onSelect={setSelected}
-          onEdit={(image) => {
-            setParent(image);
-            setRegion(null);
-          }}
+          onEdit={editImage}
         />
-      </div>
+      </div> : <Dialog open={inspectorOpen} onOpenChange={setInspectorOpen}>
+        <DialogContent hideClose className="h-[85dvh] max-w-md overflow-hidden p-0">
+          <DialogTitle className="sr-only">Image inspector</DialogTitle>
+          <DialogDescription className="sr-only">Inspect, export, or edit your selected image.</DialogDescription>
+          <Inspector image={selected} job={selectedJob}
+            model={models.find((item) => item.id === selected?.model_id) ?? model}
+            open={inspectorOpen} onClose={() => setInspectorOpen(false)} onSelect={setSelected} onEdit={editImage} />
+        </DialogContent>
+      </Dialog>}
     </div>
   );
 }
@@ -411,8 +556,8 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
         Same model, better layer.
       </h2>
       <p className="mt-3 max-w-sm text-[13px] leading-relaxed text-muted-foreground">
-        Describe what you want. Every generation runs as an async job, and the work is
-        shown — not hidden behind a spinner.
+        Describe an image, or attach one and tell us what to change.
+        Keep every version in the same conversation.
       </p>
 
       <div className="mt-9 grid w-full gap-2 sm:grid-cols-3">

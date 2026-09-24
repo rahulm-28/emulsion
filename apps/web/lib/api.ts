@@ -5,7 +5,10 @@
  * Door does in production. There is deliberately no configurable base URL here.
  */
 
+import { watchJobStream, type JobStreamHandlers } from "./job-stream";
+
 import { authHeaders } from "./auth";
+import type { DiagramSpec } from "./diagram";
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -46,6 +49,8 @@ export interface JobEventOut {
 
 export interface JobOut {
   id: string;
+  kind: "generate" | "edit" | "upload";
+  diagram: DiagramSpec | null;
   session_id: string | null;
   status: JobStatus;
   model_id: string;
@@ -127,7 +132,10 @@ async function json<T>(response: Response): Promise<T> {
     const body = await response.text();
     let detail = body;
     try {
-      detail = JSON.parse(body).detail ?? body;
+      const parsed = JSON.parse(body).detail ?? body;
+      detail = Array.isArray(parsed)
+        ? parsed.map((issue: { msg?: string }) => issue.msg ?? "Check the submitted values.").join(" ")
+        : typeof parsed === "string" ? parsed : body;
     } catch {
       /* keep the raw body */
     }
@@ -248,6 +256,22 @@ export interface CreateJobBody {
   parent_image_id?: string | null;
   session_id?: string | null;
   region?: Region | null;
+  diagram?: DiagramSpec | null;
+  mode?: "auto" | "generate" | "edit";
+  style_id?: string | null;
+  link_consistency?: boolean;
+}
+
+export interface DiagramPreview { text: string; warnings: string[] }
+
+export async function previewDiagram(
+  diagram: DiagramSpec, prompt: string, modelId: string, styleId: string | null,
+  signal: AbortSignal,
+): Promise<DiagramPreview> {
+  return json(await fetch("/v1/diagrams/preview", {
+    method: "POST", headers: await jsonHeaders(), signal,
+    body: JSON.stringify({ diagram, prompt, model_id: modelId, style_id: styleId }),
+  }));
 }
 
 export async function createJob(body: CreateJobBody): Promise<JobOut> {
@@ -263,6 +287,36 @@ export async function createJob(body: CreateJobBody): Promise<JobOut> {
       body: JSON.stringify(body),
     }),
   );
+}
+
+/** Import through a storage URL, then let the worker decode and prepare the image. */
+export async function uploadImage(
+  file: File,
+  sessionId: string | null,
+  signal: AbortSignal,
+): Promise<JobOut> {
+  const upload = await json<{ id: string; upload_url: string }>(
+    await fetch("/v1/uploads", {
+      method: "POST",
+      headers: await jsonHeaders(),
+      body: JSON.stringify({
+        filename: file.name.slice(0, 200), size_bytes: file.size, session_id: sessionId,
+      }),
+      signal,
+    }),
+  );
+  const sent = await fetch(upload.upload_url, {
+    method: "PUT",
+    // The local storage shim authenticates the owner. Future cross-origin signed
+    // storage URLs must never receive the app's session token.
+    headers: upload.upload_url.startsWith("/") ? await authHeaders() : {},
+    body: file,
+    signal,
+  });
+  if (!sent.ok) await json(sent);
+  return json(await fetch(`/v1/uploads/${upload.id}/complete`, {
+    method: "POST", headers: await authHeaders(), signal,
+  }));
 }
 
 export interface ExportRequest {
@@ -295,47 +349,7 @@ export async function exportImage(
   );
 }
 
-export interface JobStreamHandlers {
-  onMessage?: (kind: string, message: string) => void;
-  onDone?: (job: JobOut) => void;
-  onError?: (message: string) => void;
-}
-
-/**
- * Subscribe to a job's progress. Returns an unsubscribe function.
- *
- * The server closes the stream once the job is terminal, so there is nothing to poll.
- */
-export function streamJob(jobId: string, handlers: JobStreamHandlers): () => void {
-  const source = new EventSource(`/v1/jobs/${jobId}/events`);
-
-  const relay = (kind: string) => (event: Event) => {
-    try {
-      handlers.onMessage?.(kind, JSON.parse((event as MessageEvent).data).message ?? "");
-    } catch {
-      /* a malformed frame is not worth breaking the stream over */
-    }
-  };
-
-  source.addEventListener("status", relay("status"));
-  source.addEventListener("progress", relay("progress"));
-  source.addEventListener("warning", relay("warning"));
-  source.addEventListener("error", relay("error"));
-
-  source.addEventListener("done", (event) => {
-    try {
-      handlers.onDone?.(JSON.parse((event as MessageEvent).data) as JobOut);
-    } catch (err) {
-      handlers.onError?.(String(err));
-    }
-    source.close();
-  });
-
-  source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED) {
-      handlers.onError?.("connection to the job stream was lost");
-    }
-  };
-
-  return () => source.close();
+/** Same-origin streaming with an authenticated recovery path. */
+export function streamJob(jobId: string, handlers: JobStreamHandlers, afterSeq = -1): () => void {
+  return watchJobStream(jobId, handlers, getJob, afterSeq);
 }

@@ -46,7 +46,7 @@ export const SelectContent = React.forwardRef<
       position={position}
       sideOffset={6}
       className={cn(
-        "pop-in lift z-[30] min-w-[8rem] overflow-hidden rounded-xl border border-border bg-elevated p-1",
+        "pop-in lift z-[50] min-w-[8rem] overflow-hidden rounded-xl border border-border bg-elevated p-1",
         className,
       )}
       {...props}

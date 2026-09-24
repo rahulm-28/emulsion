@@ -33,10 +33,10 @@ placeholder — **no module is finished**, and each still needs its own spec.
 |---|---|
 | **M0** Foundations — stack, execution model, deploy, config | ✅ spec approved |
 | **M1** Provider layer — adapters, auth modes, retry, cost accounting | 🟨 manifests, sizing, cost, throttle, echo + foundry adapters built; **no spec, no managed identity, no BYOK** |
-| **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | 🟨 prompt compiler + constraint packs + spec validation built; ranking primitives built in `imaging`; **no spec, not wired to a UI spec editor** |
+| **M2** Engine — prompt compiler, param resolver, candidate ranking *(the moat)* | 🟨 prompt compiler + constraint packs + spec validation built; diagram candidate ranking wired into the worker; structured editor, free preview, persisted specs and reuse built; **no complete module spec** |
 | **M3** App shell — auth, workspaces, sessions, storage, library | 🟨 identity seam with dev + Clerk, per-user ownership on every row and route, isolation tested, sign-in UI behind a config flag. Clerk verified end to end against a real dev instance — sign-up, sign-in, sign-out, theme-matched screens, token-authenticated generation, correct ownership, profile claims copied onto the row. **No workspaces; no production Clerk instance and no custom domain** |
-| **M4** Generation flow — chat UI, job progress, history, reruns | 🟨 conversations, live pipeline, history and reruns work; no streaming partials |
-| **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | 🟨 region crop-composite works end to end — draw an area, edit it, rest of the image stays byte-identical (asserted through the API in a test); **no conversational edit, no mask path** |
+| **M4** Generation flow — chat UI, job progress, history, reruns | 🟨 conversations, reconnecting progress, history and reruns work; explicit new/edit routing and mobile inspector built; no streaming partials |
+| **M5** Edit subsystem — conversational, attach-and-edit, region crop-composite | 🟨 conversational routing, PNG/JPEG/WebP imports and region crop-composite work through the offline API and UI. Pixels outside the expanded edit rectangle stay byte-identical; whole-image conversational edits do not have this guarantee. **No mask path or complete module spec.** See the 2026-09-23 image-import feature spec. |
 | **M6** Post-processing — upscale, transparency, export, vector text layer | 🟨 derivative pyramid, transparency (border-connected flood fill, refuses on non-flat images), PNG/WebP/JPEG export, Lanczos resize; **no model upscale, no vector text** |
 | **M7** Intelligence — learned constraints, house styles, deck consistency | 🟨 house styles, opt-in deck consistency, and clause-counted suggestions with visible evidence; **suggestions are never auto-applied**, no cross-user learning |
 | **M8** Plans & billing — BYOK vs hosted routing, quotas, metering, Stripe | 🟥 stubbed — `quota.check()` runs on the paid path and always allows; no metering, no Stripe, no BYOK routing |
@@ -226,9 +226,10 @@ over this summary.
 - Retry: 429 → backoff `[5, 15, 45]` but prefer the `Retry-After` header; 5xx → once; timeout 300s
 - Transparency is **not supported** — M6 post-processes it instead
 
-**Open, and it decides M2's economics:** is a `seed` parameter accepted, and is it stable
-across sizes? If yes, rank K cheap candidates and re-render the winner at 4K (~$0.55/action).
-If no, ranking must happen at full resolution (~$2.13/action at K=4).
+**Resolved in the 2026-08-16 live probe:** `seed` was rejected as an unknown parameter.
+Candidate ranking therefore happens at the requested final resolution. Historical cost
+estimates are recorded in the manifest and are not an Azure-confirmed rate card. The v1
+endpoint also rejects `api-version`; the adapter adds it only on the deployments surface.
 
 ### Auth: keyless for platform, BYOK for users
 

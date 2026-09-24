@@ -1,9 +1,7 @@
 """Turn a job specification into a provider call and its results.
 
-This is the seam the moat will fill. Today it does the two things that are already
-decided — resolve parameters against the model's manifest, and assemble typed parts —
-and passes a prompt through unchanged. M2 replaces `compile_prompt` with the real
-compiler; nothing else in the flow has to move when it does.
+Compiles an explicit or inferred diagram, applies style defaults, resolves parameters
+against the manifest, and assembles typed parts before handing work to an adapter.
 
 Imports nothing web-related (invariant 2). No `if model == ...` anywhere (invariant 3).
 """

@@ -236,3 +236,16 @@ def test_empty_intent_does_not_crash(intent):
 def test_inferred_spec_carries_the_house_legend():
     spec = infer_spec("a diagram", house_legend={"ai": "Teal = models"})
     assert spec.legend == {"ai": "Teal = models"}
+
+
+def test_explicit_structure_keeps_freeform_corrections():
+    instruction = "Keep every box, but make the title larger and use charcoal arrows."
+    compiled = compile_prompt(instruction, MANIFEST, spec=TIMESHEET)
+    assert instruction in compiled.text
+    assert TIMESHEET.title in compiled.text
+    assert compiled.warnings == render(TIMESHEET, MANIFEST).warnings
+
+
+def test_inference_preserves_details_beyond_the_title():
+    instruction = "A labelled diagram. " + "Keep these boxes equally spaced. " * 5 + "NO GRADIENTS."
+    assert instruction in compile_prompt(instruction, MANIFEST).text

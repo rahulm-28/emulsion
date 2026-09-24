@@ -9,10 +9,14 @@ const API_ORIGIN = process.env.EMULSION_API_ORIGIN ?? "http://127.0.0.1:8000";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Next 15 also clones bodies for external rewrites, even when middleware is
+  // excluded. Its 10 MB default would truncate valid large image uploads.
+  experimental: { middlewareClientMaxBodySize: "50mb" },
   async rewrites() {
     return [
       { source: "/v1/:path*", destination: `${API_ORIGIN}/v1/:path*` },
       { source: "/_blobs/:path*", destination: `${API_ORIGIN}/_blobs/:path*` },
+      { source: "/_uploads/:path*", destination: `${API_ORIGIN}/_uploads/:path*` },
       { source: "/health", destination: `${API_ORIGIN}/health` },
     ];
   },
